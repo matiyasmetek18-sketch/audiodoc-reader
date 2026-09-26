@@ -1,0 +1,17 @@
+node_modules
+.DS_Store
+.env
+.env.local
+.next
+dist
+coverage
+storage/uploads/*
+storage/audio/*
+storage/cache/*
+storage/app.json
+!storage/uploads/.gitkeep
+!storage/audio/.gitkeep
+!storage/cache/.gitkeep
+*.db
+*.db-shm
+*.db-wal
