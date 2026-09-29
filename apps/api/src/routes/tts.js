@@ -21,6 +21,7 @@ ttsRouter.post(
 
     res.json({
       cached: result.cached,
+      shared: result.shared || false,
       chunkIndex: result.chunk.chunk_index,
       audioUrl: `/api/audio/${path.basename(result.audio.filePath || result.audio.file_path)}`,
       durationSeconds: result.audio.durationSeconds || result.audio.duration_seconds
