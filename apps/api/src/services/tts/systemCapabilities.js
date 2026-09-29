@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 export function findExecutable(command) {
   const candidates = [];
@@ -27,11 +28,26 @@ export function findExecutable(command) {
 export function detectSystemCapabilities() {
   const sayPath = findExecutable("say");
   const zipPath = findExecutable("/usr/bin/zip") || findExecutable("zip");
+  const systemVoices = sayPath ? listSystemVoices(sayPath) : [];
   return {
     platform: process.platform,
     sayPath,
     zipPath,
-    systemVoice: Boolean(sayPath),
-    systemExport: Boolean(sayPath && zipPath)
+    systemVoice: Boolean(sayPath && systemVoices.length),
+    systemExport: Boolean(sayPath && systemVoices.length && zipPath),
+    systemVoices
   };
+}
+
+function listSystemVoices(sayPath) {
+  try {
+    const output = execFileSync(sayPath, ["-v", "?"], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+    return output
+      .split("\n")
+      .map((line) => line.split("#")[0].trim())
+      .map((line) => line.match(/^(.*?)\s{2,}[a-z]{2}(?:[_-][A-Z0-9]+)?\s*$/i)?.[1]?.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }

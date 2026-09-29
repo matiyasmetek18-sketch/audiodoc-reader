@@ -16,6 +16,7 @@ const providers = {
   openai: createOpenAiProvider(env),
   elevenlabs: createElevenLabsProvider(env)
 };
+const inFlightSynthesis = new Map();
 
 export function getTtsProvider(provider = env.ttsProvider) {
   if (provider === "system" && !systemCapabilities.systemVoice) return providers.browser;
@@ -27,6 +28,7 @@ export function getTtsCapabilities() {
     platform: systemCapabilities.platform,
     systemVoice: systemCapabilities.systemVoice,
     systemExport: systemCapabilities.systemExport,
+    systemVoices: systemCapabilities.systemVoices,
     providers: {
       browser: true,
       openai: true,
@@ -61,17 +63,34 @@ export async function synthesizeChunk({ documentId, chunkIndex, provider, voice,
   const cached = findAudioCache(cacheInput);
   if (cached) return { cached: true, chunk, audio: cached };
 
+  const cacheKey = JSON.stringify(cacheInput);
+  const existingSynthesis = inFlightSynthesis.get(cacheKey);
+  if (existingSynthesis) {
+    const result = await existingSynthesis;
+    return { ...result, shared: true };
+  }
+
+  const synthesis = synthesizeAndCache({ chunk, activeProvider, normalizedVoice, settings, cacheInput });
+  inFlightSynthesis.set(cacheKey, synthesis);
+  try {
+    return await synthesis;
+  } finally {
+    if (inFlightSynthesis.get(cacheKey) === synthesis) inFlightSynthesis.delete(cacheKey);
+  }
+}
+
+async function synthesizeAndCache({ chunk, activeProvider, normalizedVoice, settings, cacheInput }) {
   const buffer = await activeProvider.synthesize({
     text: chunk.text,
     voice: normalizedVoice,
-    speed: Number(speed),
-    pitch: Number(pitch),
+    speed: cacheInput.speed,
+    pitch: cacheInput.pitch,
     settings
   });
 
   await fs.mkdir(env.audioDir, { recursive: true });
   const extension = activeProvider.fileExtension || "mp3";
-  const fileName = `${documentId}-${chunkIndex}-${activeProvider.name}-${textHash.slice(0, 12)}.${extension}`;
+  const fileName = `${cacheInput.documentId}-${cacheInput.chunkIndex}-${activeProvider.name}-${cacheInput.textHash.slice(0, 12)}.${extension}`;
   const filePath = path.join(env.audioDir, fileName);
   await fs.writeFile(filePath, buffer);
 
@@ -79,7 +98,7 @@ export async function synthesizeChunk({ documentId, chunkIndex, provider, voice,
     ...cacheInput,
     filePath,
     byteLength: buffer.byteLength,
-    durationSeconds: chunk.estimated_seconds / Number(speed || 1)
+    durationSeconds: chunk.estimated_seconds / Number(cacheInput.speed || 1)
   };
   saveAudioCache(audio);
   return { cached: false, chunk, audio };
