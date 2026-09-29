@@ -1,3 +1,5 @@
+import { scoreChunks } from "./textQuality.js";
+
 const DEFAULT_MAX_CHARS = 1600;
 
 export function chunkText(text, maxChars = DEFAULT_MAX_CHARS) {
@@ -33,12 +35,22 @@ export function chunkText(text, maxChars = DEFAULT_MAX_CHARS) {
   }
 
   if (current) chunks.push(buildChunk(chunks.length, current, startChar, startChar + current.length));
-  return chunks;
+  return scoreChunks(chunks);
 }
 
 function findCutPoint(text, maxChars) {
   const window = text.slice(0, maxChars);
-  return Math.max(window.lastIndexOf(" "), Math.floor(maxChars * 0.8));
+  const minimumPreferredCut = Math.floor(maxChars * 0.6);
+  const punctuationCut = Math.max(
+    window.lastIndexOf(","),
+    window.lastIndexOf(";"),
+    window.lastIndexOf(":"),
+    window.lastIndexOf("—")
+  );
+  const spaceCut = window.lastIndexOf(" ");
+  if (punctuationCut >= minimumPreferredCut) return punctuationCut + 1;
+  if (spaceCut >= minimumPreferredCut) return spaceCut;
+  return Math.floor(maxChars * 0.8);
 }
 
 function buildChunk(chunkIndex, text, startChar, endChar) {
