@@ -77,7 +77,25 @@ documentsRouter.post(
       sections
     );
 
-    res.status(201).json({ document, chunks, sections });
+    res.status(201).json({
+      document,
+      sections,
+      summary: {
+        chunkCount: chunks.length,
+        wordCount,
+        estimatedMinutes: document.estimated_minutes,
+        flaggedChunkCount: chunks.filter((chunk) => chunk.quality_status !== "ok").length
+      }
+    });
+  })
+);
+
+documentsRouter.get(
+  "/:id/chunks",
+  asyncHandler(async (req, res) => {
+    const document = getDocument(req.params.id);
+    if (!document) throw notFound("Document not found.");
+    res.json({ documentId: document.id, chunks: getChunksForDocument(req.params.id) });
   })
 );
 
