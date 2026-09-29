@@ -10,21 +10,29 @@ export async function parseDocument(file) {
   const extension = path.extname(file.originalname).toLowerCase();
   let rawText = "";
 
-  if (file.mimetype === "application/pdf" || extension === ".pdf") {
-    const buffer = await fs.readFile(file.path);
-    const parsed = await pdfData(buffer);
-    rawText = parsed.text;
-  } else if (
-    file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    extension === ".docx"
-  ) {
-    const parsed = await mammoth.extractRawText({ path: file.path });
-    rawText = parsed.value;
-  } else if (file.mimetype.startsWith("text/") || extension === ".txt") {
-    rawText = await fs.readFile(file.path, "utf8");
-  } else {
-    const error = new Error("Unsupported file type. Upload PDF, DOCX, or TXT.");
-    error.status = 400;
+  try {
+    if (file.mimetype === "application/pdf" || extension === ".pdf") {
+      const buffer = await fs.readFile(file.path);
+      const parsed = await pdfData(buffer);
+      rawText = parsed.text;
+    } else if (
+      file.mimetype === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+      extension === ".docx"
+    ) {
+      const parsed = await mammoth.extractRawText({ path: file.path });
+      rawText = parsed.value;
+    } else if (file.mimetype.startsWith("text/") || extension === ".txt") {
+      rawText = await fs.readFile(file.path, "utf8");
+    } else {
+      const error = new Error("Unsupported file type. Upload PDF, DOCX, or TXT.");
+      error.status = 400;
+      throw error;
+    }
+  } catch (error) {
+    if (!error.status) {
+      error.status = 422;
+      error.code = "DOCUMENT_EXTRACTION_FAILED";
+    }
     throw error;
   }
 
