@@ -1,6 +1,22 @@
 # AudioDoc Reader
 
+[![CI](https://github.com/YOUR_GITHUB_USERNAME/audiodoc-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/audiodoc-reader/actions/workflows/ci.yml)
+
 A full-stack ElevenReader-style app for uploading PDF, DOCX, and TXT files, extracting clean text, and reading documents aloud with chunked, cached text-to-speech.
+
+## Why I Built This
+
+I built AudioDoc Reader to make long documents easier to consume while learning how to turn a real document-processing workflow into a resilient full-stack product. The project focuses on the details that make a reader trustworthy: preserving text, keeping playback responsive, handling imperfect files, and making local-first features useful without requiring a paid API.
+
+## Engineering Highlights
+
+- **Zero-loss persistence migration:** moved the existing 3-document, 2,630-chunk dataset from JSON into SQLite and verified the migrated database with `PRAGMA integrity_check: ok`.
+- **Race-free TTS caching:** concurrent requests for one chunk now use a per-cache-key single-flight lock. In the stress run, 8 identical requests produced 1 synthesis, 7 shared results, and a follow-up request hit the populated cache.
+- **Local OCR quality filter:** a bundled English word list and local character, structure, ISBN, and fragment heuristics scored a 20-sample labeled smoke set at 100% precision and 100% recall. This is an intentionally small benchmark, not a claim of production-perfect classification; flagged text remains visible by default.
+- **Measured failure handling:** malformed extraction inputs return controlled 422 responses, 8 concurrent uploads completed 8/8, traversal attempts stayed inside UUID-based storage paths, and an interrupted 52 MB upload left SQLite integrity intact after restart. Upload responses now return a lightweight summary rather than inlining every chunk.
+- **Playback measurements:** after punctuation-preserving chunking, average measured chunk-boundary delay fell from 0.118s to 0.111s in the local five-chunk comparison. End-to-end first audio was about 2.31s for a small document and 21.52s for the 52 MB stress document, including upload.
+
+The stress figures above come from local runs on this checkout and use a small hand-labeled quality set. They are useful regression baselines, not cross-machine performance guarantees.
 
 ## Features
 
@@ -52,6 +68,8 @@ npm run migrate --workspace apps/api
 
 Frontend: http://localhost:3000
 Backend: http://localhost:4000
+
+The CI workflow runs `npm run lint`, `npm run build`, and the deterministic API stress checks on every push and pull request. The badge above uses a placeholder GitHub owner because this checkout does not currently have a Git remote configured; replace `YOUR_GITHUB_USERNAME/audiodoc-reader` with the published repository path when you push it.
 
 The local system-voice provider uses macOS-only `say` and `zip` executables. AudioDoc feature-detects them at startup; on other operating systems it hides the local provider and falls back to browser speech. OpenAI, ElevenLabs, and browser Web Speech are the cross-platform options. Browser Web Speech is the suggested free default because Chrome and Edge often provide more natural voices than the basic macOS `say` voice. On macOS, `say -v ?` supplies the installed voice list; for better free local quality, download an Enhanced or Premium voice from System Settings → Accessibility → Spoken Content → System Voice → Manage Voices. For hosted TTS, open the app Settings panel and paste your API key, or set `TTS_PROVIDER=openai` / `TTS_PROVIDER=elevenlabs` in `.env` with the matching key. Runtime settings are stored in SQLite and do not require restarting the app. With `TTS_PROVIDER=browser`, the app uses the browser Web Speech API and does not generate downloadable audio.
 

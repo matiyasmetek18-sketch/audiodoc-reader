@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 
 const baseUrl = process.env.AUDIODOC_URL || "http://localhost:4000";
 const fixturePath = process.env.STRESS_FILE;
+const provider = process.env.STRESS_PROVIDER || "system";
 const voice = process.env.STRESS_VOICE || "Samantha";
 
 if (!fixturePath) {
@@ -22,7 +23,7 @@ const requests = await Promise.all(
   Array.from({ length: 8 }, () => fetch(`${baseUrl}/api/tts/chunk`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ documentId: uploaded.document.id, chunkIndex: 0, provider: "system", voice, speed: 1, pitch: 0 })
+    body: JSON.stringify({ documentId: uploaded.document.id, chunkIndex: 0, provider, voice, speed: 1, pitch: 0 })
   }))
 );
 if (requests.some((response) => !response.ok)) throw new Error(`Concurrent TTS failed: ${requests.map((response) => response.status).join(", ")}`);
@@ -32,7 +33,7 @@ if (shared < results.length - 1) throw new Error(`Single-flight failed: only ${s
 const followUp = await fetch(`${baseUrl}/api/tts/chunk`, {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ documentId: uploaded.document.id, chunkIndex: 0, provider: "system", voice, speed: 1, pitch: 0 })
+  body: JSON.stringify({ documentId: uploaded.document.id, chunkIndex: 0, provider, voice, speed: 1, pitch: 0 })
 });
 const followUpResult = await followUp.json();
 if (!followUpResult.cached) throw new Error("Follow-up TTS request did not use the populated cache.");

@@ -8,17 +8,20 @@ import { createOpenAiProvider } from "./openaiProvider.js";
 import { createElevenLabsProvider } from "./elevenLabsProvider.js";
 import { createSystemProvider } from "./systemProvider.js";
 import { detectSystemCapabilities } from "./systemCapabilities.js";
+import { createTestProvider } from "./testProvider.js";
 
 const systemCapabilities = detectSystemCapabilities();
 const providers = {
   system: createSystemProvider(systemCapabilities),
   browser: createBrowserProvider(),
   openai: createOpenAiProvider(env),
-  elevenlabs: createElevenLabsProvider(env)
+  elevenlabs: createElevenLabsProvider(env),
+  test: createTestProvider()
 };
 const inFlightSynthesis = new Map();
 
 export function getTtsProvider(provider = env.ttsProvider) {
+  if (provider === "test" && env.nodeEnv !== "test") return providers.browser;
   if (provider === "system" && !systemCapabilities.systemVoice) return providers.browser;
   return providers[provider] ?? providers.browser;
 }
