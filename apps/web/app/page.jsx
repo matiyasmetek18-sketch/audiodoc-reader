@@ -44,7 +44,7 @@ export default function Home() {
       const data = await api("/api/documents", { method: "POST", body: formData });
       await loadDocuments();
       setSelectedId(data.document.id);
-      setBundle({ document: data.document, chunks: data.chunks, sections: data.sections || [], bookmarks: [] });
+      await loadDocument(data.document.id);
     } catch (err) {
       setError(err.message);
     } finally {

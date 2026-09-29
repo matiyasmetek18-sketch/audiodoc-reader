@@ -35,6 +35,9 @@ select {
 }
 
 .reader-highlight {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  background: color-mix(in srgb, var(--accent-strong) 13%, transparent);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  border-radius: 0.18rem;
+  padding: 0.08em 0.18em;
 }

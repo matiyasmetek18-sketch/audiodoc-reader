@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bookmark,
+  AlignJustify,
   CheckCircle,
   Download,
   FileText,
@@ -14,6 +15,7 @@ import {
   RotateCw,
   Settings,
   Sparkles,
+  Type,
   X,
   Volume2
 } from "lucide-react";
@@ -21,32 +23,23 @@ import { api, audioUrl } from "../lib/api";
 import { formatTime } from "../lib/format";
 
 const openAiVoices = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"];
-const systemVoices = [
-  "Reed (English (US))",
-  "Rocko (English (US))",
-  "Eddy (English (US))",
-  "Grandpa (English (US))",
-  "Daniel"
-];
-
-const deepVoices = [
-  { label: "Local Mac Reed", value: "Reed (English (US))", provider: "system" },
-  { label: "Local Mac Rocko", value: "Rocko (English (US))", provider: "system" },
-  { label: "Local Mac Eddy", value: "Eddy (English (US))", provider: "system" },
-  { label: "Local Mac Daniel", value: "Daniel", provider: "system" },
-  { label: "Browser deep", value: "browser-deep", provider: "browser" },
+const fallbackBrowserVoice = { label: "Browser default", value: "", provider: "browser" };
+const providerVoices = [
   ...openAiVoices.map((voice) => ({ label: `OpenAI ${voice}`, value: voice, provider: "openai" })),
   { label: "ElevenLabs deep", value: "", provider: "elevenlabs" }
 ];
 
-const browserVoice = deepVoices.find((item) => item.provider === "browser");
-
-function voiceForProvider(provider, value, capabilities) {
-  const available = deepVoices.filter((item) => item.provider !== "system" || capabilities?.systemVoice);
-  return available.find((item) => item.provider === provider && item.value === value)
+function voiceForProvider(provider, value, available) {
+  return available.find((item) => item.provider === provider && (item.value === value || item.voiceName === value))
     || available.find((item) => item.provider === provider)
     || available.find((item) => item.provider === "browser")
-    || browserVoice;
+    || fallbackBrowserVoice;
+}
+
+function preferredBrowserVoice(voices) {
+  return voices.find((voice) => /^(Samantha|Alex|Google US English|Microsoft David|Microsoft Guy)/i.test(voice.name) && /^en(-|_)(US|GB)/i.test(voice.lang))
+    || voices.find((voice) => /^en(-|_)US/i.test(voice.lang))
+    || voices[0];
 }
 
 export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
@@ -55,7 +48,13 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [pitch, setPitch] = useState(0);
-  const [voice, setVoice] = useState(browserVoice);
+  const [fontSize, setFontSize] = useState(17);
+  const [lineHeight, setLineHeight] = useState(1.8);
+  const [fontFamily, setFontFamily] = useState("sans");
+  const [skipLowConfidence, setSkipLowConfidence] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState("playback");
+  const [voice, setVoice] = useState(fallbackBrowserVoice);
+  const [browserVoices, setBrowserVoices] = useState([]);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [elapsed, setElapsed] = useState(document.current_offset_seconds || 0);
   const [podcast, setPodcast] = useState(null);
@@ -65,10 +64,20 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   const [localSections, setLocalSections] = useState(sections);
   const [organizing, setOrganizing] = useState(false);
   const [downloadState, setDownloadState] = useState({ status: "idle", message: "", url: "" });
-  const availableVoices = useMemo(
-    () => deepVoices.filter((item) => item.provider !== "system" || settings?.capabilities?.systemVoice),
-    [settings?.capabilities?.systemVoice]
+  const browserVoiceOptions = useMemo(
+    () => browserVoices.map((item) => ({
+      label: `Browser ${item.name} (${item.lang})`,
+      value: item.voiceURI || item.name,
+      voiceName: item.name,
+      provider: "browser"
+    })),
+    [browserVoices]
   );
+  const availableVoices = useMemo(() => [
+    ...(settings?.capabilities?.systemVoice ? (settings.capabilities.systemVoices || []).map((item) => ({ label: `Local Mac ${item}`, value: item, provider: "system" })) : []),
+    ...(browserVoiceOptions.length ? browserVoiceOptions : [fallbackBrowserVoice]),
+    ...providerVoices
+  ], [browserVoiceOptions, settings?.capabilities?.systemVoice, settings?.capabilities?.systemVoices]);
   const audioRef = useRef(null);
   const utteranceRef = useRef(null);
   const activeRef = useRef(null);
@@ -90,6 +99,12 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     [activeChunks, chunkIndex]
   );
   const progress = totalSeconds ? Math.min(100, ((completedSeconds + elapsed) / totalSeconds) * 100) : 0;
+  const currentTotalSeconds = Math.min(totalSeconds, completedSeconds + elapsed);
+  const readingFont = fontFamily === "serif"
+    ? "Georgia, Cambria, Times New Roman, serif"
+    : fontFamily === "dyslexic"
+      ? "OpenDyslexic, Lexie Readable, Arial, sans-serif"
+      : "Inter, ui-sans-serif, system-ui, sans-serif";
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -103,23 +118,38 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   }, [activeChunks, chunkIndex, podcast]);
 
   useEffect(() => {
+    function refreshBrowserVoices() {
+      setBrowserVoices(window.speechSynthesis.getVoices());
+    }
+
+    refreshBrowserVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", refreshBrowserVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshBrowserVoices);
+  }, []);
+
+  useEffect(() => {
     api("/api/settings")
-      .then((data) => {
-        setSettings(data.settings);
-        const configured = data.settings.ttsProvider;
-        const capabilities = data.settings.capabilities;
-        if (configured === "openai" && data.settings.hasOpenaiApiKey) {
-          setVoice(voiceForProvider("openai", data.settings.openaiTtsVoice, capabilities));
-        } else if (configured === "elevenlabs" && data.settings.hasElevenLabsApiKey) {
-          setVoice(voiceForProvider("elevenlabs", data.settings.elevenLabsVoiceId, capabilities));
-        } else if (configured === "system" && capabilities?.systemVoice) {
-          setVoice(voiceForProvider("system", data.settings.systemVoice, capabilities));
-        } else {
-          setVoice(voiceForProvider("browser", "browser-deep", capabilities));
-        }
-      })
+      .then((data) => setSettings(data.settings))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!settings) return;
+    const capabilities = settings.capabilities;
+    let nextVoice;
+    if (settings.ttsProvider === "openai" && settings.hasOpenaiApiKey) {
+      nextVoice = voiceForProvider("openai", settings.openaiTtsVoice, availableVoices);
+    } else if (settings.ttsProvider === "elevenlabs" && settings.hasElevenLabsApiKey) {
+      nextVoice = voiceForProvider("elevenlabs", settings.elevenLabsVoiceId, availableVoices);
+    } else if (settings.ttsProvider === "system" && capabilities?.systemVoice) {
+      nextVoice = voiceForProvider("system", settings.systemVoice, availableVoices);
+    } else {
+      const recommended = preferredBrowserVoice(browserVoices);
+      nextVoice = voiceForProvider("browser", settings.browserVoice || recommended?.voiceURI || recommended?.name, availableVoices);
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setVoice(nextVoice);
+  }, [availableVoices, browserVoices, settings]);
 
   useEffect(() => {
     // Reset reader-local state when switching to a different document.
@@ -135,6 +165,15 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
 
   async function play() {
     if (!activeChunk) return;
+    if (skipLowConfidence && isLowConfidence(activeChunk)) {
+      const next = findPlayableIndex(chunkIndex, 1);
+      if (next !== chunkIndex) {
+        setChunkIndex(next);
+        setElapsed(0);
+        setTimeout(() => playChunk(next), 50);
+        return;
+      }
+    }
     setIsPlaying(true);
     isPlayingRef.current = true;
     if (voice.provider === "browser" || podcast) {
@@ -171,8 +210,10 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   function speakInBrowser(text) {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    const voices = window.speechSynthesis.getVoices();
-    utterance.voice = voices.find((candidate) => /male|daniel|david|google uk english male/i.test(candidate.name)) || voices[0] || null;
+    const selected = browserVoices.find((candidate) => (candidate.voiceURI || candidate.name) === voice.value || candidate.name === voice.voiceName)
+      || preferredBrowserVoice(browserVoices);
+    utterance.voice = selected || null;
+    if (selected?.lang) utterance.lang = selected.lang;
     utterance.rate = speed;
     utterance.pitch = 1 + pitch;
     utterance.onend = nextChunk;
@@ -201,7 +242,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   function nextChunk() {
     const currentIndex = chunkIndexRef.current;
     const currentChunks = activeChunksRef.current;
-    const next = Math.min(currentChunks.length - 1, currentIndex + 1);
+    const next = skipLowConfidence ? findPlayableIndex(currentIndex, 1) : Math.min(currentChunks.length - 1, currentIndex + 1);
     setElapsed(0);
     setChunkIndex(next);
     saveProgress(next, 0);
@@ -232,21 +273,45 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     await audioRef.current.play();
   }
 
-  function skip(direction) {
+  function skipBySeconds(seconds) {
     const audio = audioRef.current;
     if (voice.provider !== "browser" && audio?.src) {
-      audio.currentTime = Math.max(0, audio.currentTime + direction * 20);
+      audio.currentTime = Math.max(0, audio.currentTime + seconds);
       setElapsed(audio.currentTime);
       return;
     }
-    const currentChunks = activeChunksRef.current;
-    const next = Math.min(currentChunks.length - 1, Math.max(0, chunkIndex + direction));
-    setChunkIndex(next);
-    setElapsed(0);
-    if (isPlaying) {
-      window.speechSynthesis.cancel();
-      setTimeout(() => speakInBrowser(currentChunks[next].text), 50);
+    seekToTotalSeconds(currentTotalSeconds + seconds);
+  }
+
+  function seekToTotalSeconds(targetSeconds) {
+    const target = Math.max(0, Math.min(totalSeconds, targetSeconds));
+    let accumulated = 0;
+    let nextIndex = 0;
+    let offset = 0;
+    for (let index = 0; index < activeChunks.length; index += 1) {
+      const duration = Number(activeChunks[index].estimated_seconds || activeChunks[index].estimatedSeconds || 0);
+      if (target <= accumulated + duration || index === activeChunks.length - 1) {
+        nextIndex = index;
+        offset = Math.max(0, target - accumulated);
+        break;
+      }
+      accumulated += duration;
     }
+    setChunkIndex(nextIndex);
+    setElapsed(offset);
+    if (voice.provider !== "browser" && audioRef.current?.src && nextIndex === chunkIndex) {
+      audioRef.current.currentTime = offset;
+    } else if (isPlaying) {
+      window.speechSynthesis.cancel();
+      setTimeout(() => playChunk(nextIndex), 50);
+    }
+  }
+
+  function findPlayableIndex(startIndex, direction) {
+    const currentChunks = activeChunksRef.current;
+    let index = startIndex + direction;
+    while (index >= 0 && index < currentChunks.length && isLowConfidence(currentChunks[index])) index += direction;
+    return Math.max(0, Math.min(currentChunks.length - 1, index));
   }
 
   async function saveProgress(nextChunk = chunkIndex, offset = elapsed) {
@@ -298,13 +363,14 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     setSettingsSaved(true);
     const nextProvider = data.settings.ttsProvider;
     if (nextProvider === "openai") {
-      setVoice(voiceForProvider("openai", data.settings.openaiTtsVoice, data.settings.capabilities));
+      setVoice(voiceForProvider("openai", data.settings.openaiTtsVoice, availableVoices));
     } else if (nextProvider === "elevenlabs") {
-      setVoice(voiceForProvider("elevenlabs", data.settings.elevenLabsVoiceId, data.settings.capabilities));
-    } else if (nextProvider === "system") {
-      setVoice(voiceForProvider("system", data.settings.systemVoice, data.settings.capabilities));
+      setVoice(voiceForProvider("elevenlabs", data.settings.elevenLabsVoiceId, availableVoices));
+    } else if (nextProvider === "system" && data.settings.capabilities?.systemVoice) {
+      setVoice(voiceForProvider("system", data.settings.systemVoice, availableVoices));
     } else {
-      setVoice(voiceForProvider("browser", "browser-deep", data.settings.capabilities));
+      const recommended = preferredBrowserVoice(browserVoices);
+      setVoice(voiceForProvider("browser", data.settings.browserVoice || recommended?.voiceURI || recommended?.name, availableVoices));
     }
   }
 
@@ -357,7 +423,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
 
   return (
     <section className="flex min-h-0 flex-1 flex-col">
-      <div className="border-b border-[#2a3340] bg-[#111720] px-4 py-3 md:px-6">
+      <div className="border-b border-[#2a3340]/60 bg-[#111720] px-4 py-3 md:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <p className="truncate text-lg font-semibold text-white">{podcast ? `Podcast: ${document.title}` : document.title}</p>
@@ -365,24 +431,24 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
           </div>
           <div className="flex items-center gap-2">
             {podcast && (
-              <button title="Back to document" onClick={exitPodcastMode} className="inline-flex items-center gap-2 rounded-md border border-[#2a3340] px-3 py-2 text-sm text-[#cbd5df] hover:bg-[#1b222c]">
+              <button title="Back to document" onClick={exitPodcastMode} className="inline-flex items-center gap-2 rounded-md border border-[#2a3340]/60 px-3 py-2 text-sm text-[#cbd5df] hover:bg-[#1b222c]">
                 <FileText className="h-4 w-4" />
                 Document
               </button>
             )}
-            <button title="Podcast mode" onClick={startPodcastMode} className="rounded-md border border-[#2a3340] p-2 text-[#f0b35b] hover:bg-[#1b222c]">
+            <button title="Podcast mode" onClick={startPodcastMode} className="rounded-md border border-[#2a3340]/60 p-2 text-[#f0b35b] hover:bg-[#1b222c]">
               {loadingAudio ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
             </button>
-            <button title="Settings" onClick={() => setShowSettings(true)} className="rounded-md border border-[#2a3340] p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
+            <button title="Settings" onClick={() => setShowSettings(true)} className="rounded-md border border-[#2a3340]/60 p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
               <Settings className="h-4 w-4" />
             </button>
-            <button title="Generate offline audio" onClick={generateDownload} className="rounded-md border border-[#2a3340] p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
+            <button title="Generate offline audio" onClick={generateDownload} className="rounded-md border border-[#2a3340]/60 p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
               {downloadState.status === "working" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             </button>
-            <button title="Organize document" onClick={organizeCurrentDocument} className="rounded-md border border-[#2a3340] p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
+            <button title="Organize document" onClick={organizeCurrentDocument} className="rounded-md border border-[#2a3340]/60 p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
               {organizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             </button>
-            <button title="Bookmark" onClick={addBookmark} className="rounded-md border border-[#2a3340] p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
+            <button title="Bookmark" onClick={addBookmark} className="rounded-md border border-[#2a3340]/60 p-2 text-[#9aa8b7] hover:bg-[#1b222c]">
               <Bookmark className="h-4 w-4" />
             </button>
           </div>
@@ -392,13 +458,15 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[1fr_280px]">
-        <div className="scrollbar-thin overflow-y-auto p-4 pb-80 md:p-6">
-          <div className="mx-auto max-w-3xl space-y-3">
-            {activeChunks.map((chunk, index) => (
+      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="scrollbar-thin overflow-y-auto p-4 pb-36 md:p-8 md:pb-36">
+          <div className="mx-auto max-w-[78ch] space-y-3" style={{ fontSize: `${fontSize}px`, lineHeight, fontFamily: readingFont }}>
+            {activeChunks.map((chunk, index) => {
+              const qualityFlagged = isQualityFlagged(chunk);
+              return (
               <div key={`${podcast ? "podcast" : document.id}-${index}`}>
                 {activeSections.some((section) => sectionStart(section) === index) && (
-                  <div className="mb-3 mt-6 border-b border-[#2a3340] pb-3">
+                  <div className="mb-3 mt-6 border-b border-[#2a3340]/60 pb-3">
                     <p className="text-xs uppercase tracking-[0.18em] text-[#61d6bd]">Section</p>
                     <h2 className="mt-1 text-xl font-semibold text-white">{sectionForChunk(index)?.title}</h2>
                     {sectionForChunk(index)?.summary && <p className="mt-2 text-sm leading-6 text-[#9aa8b7]">{sectionForChunk(index).summary}</p>}
@@ -411,118 +479,57 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
                     setElapsed(0);
                     stopPlayback();
                   }}
-                  className={`w-full rounded-lg border p-4 text-left leading-7 transition ${
-                    index === chunkIndex ? "reader-highlight text-white" : "border-transparent bg-transparent text-[#cbd5df] hover:bg-[#151a21]"
+                  className={`w-full border border-transparent text-left transition ${
+                    index === chunkIndex ? "text-white" : "bg-transparent text-[#cbd5df] hover:bg-[#151a21]"
                   }`}
                 >
-                  {chunk.text}
+                  <span className={index === chunkIndex ? "reader-highlight" : ""}>{chunk.text}</span>
+                  {qualityFlagged && <span className="mt-3 block text-xs leading-5 text-[#d8ae6a]">Quality review: {qualityReasons(chunk).join(", ") || "possible OCR or front/back matter"}. Playback still includes this chunk unless skipping is enabled in Reading.</span>}
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
-        <aside className="fixed inset-x-0 bottom-0 z-30 max-h-[45dvh] overflow-y-auto border-t border-[#2a3340] bg-[#10161e] p-4 shadow-2xl md:static md:max-h-none md:border-l md:border-t-0 md:shadow-none">
-          <div className="space-y-5">
-            <div className="flex items-center justify-center gap-3">
-              <button title="Back" onClick={() => skip(-1)} className="rounded-md border border-[#2a3340] p-3 hover:bg-[#1b222c]">
-                <RotateCcw className="h-5 w-5" />
-              </button>
-              <button
-                title={isPlaying ? "Pause" : "Play"}
-                onClick={isPlaying ? pause : play}
-                className="rounded-md bg-[#61d6bd] p-4 text-[#07100d] hover:bg-[#73e4cd]"
-              >
-                {loadingAudio ? <Loader2 className="h-6 w-6 animate-spin" /> : isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6" />}
-              </button>
-              <button title="Forward" onClick={() => skip(1)} className="rounded-md border border-[#2a3340] p-3 hover:bg-[#1b222c]">
-                <RotateCw className="h-5 w-5" />
-              </button>
+        <aside className="border-t border-[#2a3340]/60 bg-[#10161e]/80 p-4 md:border-l md:border-t-0 md:p-5">
+          <div className="sticky top-4 space-y-4">
+            <div className="grid grid-cols-4 border-b border-[#2a3340]/60">
+              {[{ id: "playback", label: "Playback", icon: Volume2 }, { id: "reading", label: "Reading", icon: Type }, { id: "sections", label: "Sections", icon: AlignJustify }, { id: "bookmarks", label: "Saved", icon: Bookmark }].map(({ id, label, icon: Icon }) => (
+                <button key={id} onClick={() => setSidebarTab(id)} className={`flex min-w-0 flex-col items-center gap-1 border-b-2 px-1 py-2 text-[11px] ${sidebarTab === id ? "border-[#61d6bd] text-white" : "border-transparent text-[#788694] hover:text-[#cbd5df]"}`}>
+                  <Icon className="h-4 w-4" />
+                  <span className="truncate">{label}</span>
+                </button>
+              ))}
             </div>
 
-            <label className="block text-sm text-[#cbd5df]">
-              <span className="mb-2 flex items-center gap-2"><Volume2 className="h-4 w-4" />Voice</span>
-              <select
-                value={`${voice.provider}:${voice.value}`}
-                onChange={(event) => {
-                  const [provider, value] = event.target.value.split(":");
-                  setVoice(deepVoices.find((item) => item.provider === provider && item.value === value) || deepVoices[0]);
-                }}
-                className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white"
-              >
-                {availableVoices.map((item) => (
-                  <option key={`${item.provider}:${item.value}`} value={`${item.provider}:${item.value}`}>{item.label}</option>
-                ))}
-              </select>
-            </label>
-
-            <Range label={`Speed ${speed.toFixed(2)}x`} min="0.75" max="2" step="0.05" value={speed} onChange={setSpeed} />
-            <Range label={`Pitch ${pitch.toFixed(2)}`} min="-0.2" max="0.2" step="0.01" value={pitch} onChange={setPitch} />
-            {voice.provider !== "browser" && !settings?.hasOpenaiApiKey && voice.provider === "openai" && (
-              <button onClick={() => setShowSettings(true)} className="w-full rounded-md border border-[#614426] bg-[#22170b] p-3 text-left text-xs text-[#f0d7ad]">
-                Add your OpenAI API key in Settings to use hosted voices.
-              </button>
-            )}
-            <div className="rounded-lg border border-[#2a3340] p-3">
-              <button
-                onClick={generateDownload}
-                disabled={downloadState.status === "working"}
-                className="flex w-full items-center justify-center gap-2 rounded-md bg-[#61d6bd] px-3 py-2 text-sm font-semibold text-[#07100d] disabled:opacity-60"
-              >
-                {downloadState.status === "working" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                Offline audio
-              </button>
-              {downloadState.message && (
-                <p className={`mt-2 text-xs leading-5 ${downloadState.status === "error" ? "text-red-200" : "text-[#9aa8b7]"}`}>{downloadState.message}</p>
-              )}
-              {downloadState.url && (
-                <a href={downloadState.url} download className="mt-2 block rounded-md border border-[#2a3340] px-3 py-2 text-center text-sm text-white hover:bg-[#1b222c]">
-                  Download file
-                </a>
-              )}
-            </div>
-
-            {!!activeSections.length && (
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-white">Sections</p>
-                  <button onClick={organizeCurrentDocument} className="rounded-md border border-[#2a3340] p-1.5 text-[#9aa8b7] hover:bg-[#1b222c]">
-                    {organizing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            {sidebarTab === "playback" && (
+              <div className="space-y-4">
+                <label className="block text-sm text-[#cbd5df]">
+                  <span className="mb-2 flex items-center gap-2"><Volume2 className="h-4 w-4" />Voice</span>
+                  <select value={`${voice.provider}:${voice.value}`} onChange={(event) => setVoice(availableVoices.find((item) => `${item.provider}:${item.value}` === event.target.value) || fallbackBrowserVoice)} className="w-full rounded-md border border-[#2a3340]/70 bg-[#151a21] px-3 py-2 text-white">
+                    {availableVoices.map((item) => <option key={`${item.provider}:${item.value}`} value={`${item.provider}:${item.value}`}>{item.label}</option>)}
+                  </select>
+                </label>
+                <Range label={`Speed ${speed.toFixed(2)}x`} min="0.75" max="2" step="0.05" value={speed} onChange={setSpeed} />
+                <Range label={`Pitch ${pitch.toFixed(2)}`} min="-0.2" max="0.2" step="0.01" value={pitch} onChange={setPitch} />
+                {voice.provider === "openai" && !settings?.hasOpenaiApiKey && <button onClick={() => setShowSettings(true)} className="w-full rounded-md border border-[#614426]/70 bg-[#22170b]/70 p-3 text-left text-xs text-[#f0d7ad]">Add your OpenAI API key in Settings to use hosted voices.</button>}
+                <div className="border border-[#2a3340]/60 p-3">
+                  <button onClick={generateDownload} disabled={downloadState.status === "working"} className="flex w-full items-center justify-center gap-2 rounded-md border border-[#718190]/70 px-3 py-2 text-sm text-[#d6dde5] hover:bg-[#1b222c] disabled:opacity-60">
+                    {downloadState.status === "working" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    Offline audio export
                   </button>
-                </div>
-                <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                  {activeSections.map((section) => (
-                    <button
-                      key={section.id}
-                      onClick={() => {
-                        setChunkIndex(sectionStart(section));
-                        setElapsed(0);
-                        stopPlayback();
-                      }}
-                      className={`w-full rounded-md border p-2 text-left text-xs hover:bg-[#1b222c] ${
-                        chunkIndex >= sectionStart(section) && chunkIndex <= sectionEnd(section)
-                          ? "border-[#61d6bd] text-white"
-                          : "border-[#2a3340] text-[#cbd5df]"
-                      }`}
-                    >
-                      {section.title}
-                    </button>
-                  ))}
+                  {downloadState.message && <p className={`mt-2 text-xs leading-5 ${downloadState.status === "error" ? "text-red-200" : "text-[#9aa8b7]"}`}>{downloadState.message}</p>}
+                  {downloadState.url && <a href={downloadState.url} download className="mt-2 block border border-[#2a3340]/70 px-3 py-2 text-center text-sm text-white hover:bg-[#1b222c]">Download file</a>}
                 </div>
               </div>
             )}
 
-            <div>
-              <p className="mb-2 text-sm font-semibold text-white">Bookmarks</p>
-              <div className="space-y-2">
-                {bookmarks?.slice(0, 5).map((bookmark) => (
-                  <button key={bookmark.id} onClick={() => setChunkIndex(bookmark.chunk_index)} className="w-full rounded-md border border-[#2a3340] p-2 text-left text-xs text-[#cbd5df] hover:bg-[#1b222c]">
-                    {bookmark.label}
-                  </button>
-                ))}
-                {!bookmarks?.length && <p className="text-xs text-[#9aa8b7]">No bookmarks saved.</p>}
-              </div>
-            </div>
+            {sidebarTab === "reading" && <ReadingControls fontSize={fontSize} setFontSize={setFontSize} lineHeight={lineHeight} setLineHeight={setLineHeight} fontFamily={fontFamily} setFontFamily={setFontFamily} skipLowConfidence={skipLowConfidence} setSkipLowConfidence={setSkipLowConfidence} />}
+
+            {sidebarTab === "sections" && <SectionList sections={activeSections} chunkIndex={chunkIndex} sectionForChunk={sectionForChunk} organize={organizeCurrentDocument} organizing={organizing} onSelect={(index) => { setChunkIndex(index); setElapsed(0); stopPlayback(); }} />}
+
+            {sidebarTab === "bookmarks" && <BookmarkList bookmarks={bookmarks} onSelect={(index) => { setChunkIndex(index); setElapsed(0); stopPlayback(); }} />}
           </div>
           <audio
             ref={audioRef}
@@ -532,19 +539,33 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
           />
         </aside>
       </div>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#2a3340]/70 bg-[#0f141b]/95 px-4 py-3 shadow-[0_-10px_30px_rgba(0,0,0,0.22)] backdrop-blur md:left-80 md:px-8">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3">
+          <button title="Skip back 15 seconds" onClick={() => skipBySeconds(-15)} className="rounded-md border border-[#718190]/70 p-2 text-[#cbd5df] hover:bg-[#1b222c]"><RotateCcw className="h-4 w-4" /></button>
+          <button title={isPlaying ? "Pause" : "Play"} onClick={isPlaying ? pause : play} className="rounded-md bg-[#61d6bd] p-3 text-[#07100d] hover:bg-[#73e4cd]">
+            {loadingAudio ? <Loader2 className="h-5 w-5 animate-spin" /> : isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+          </button>
+          <button title="Skip forward 15 seconds" onClick={() => skipBySeconds(15)} className="rounded-md border border-[#718190]/70 p-2 text-[#cbd5df] hover:bg-[#1b222c]"><RotateCw className="h-4 w-4" /></button>
+          <div className="min-w-[180px] flex-1">
+            <input aria-label="Reading progress" type="range" min="0" max={Math.max(totalSeconds, 1)} step="1" value={currentTotalSeconds} onChange={(event) => seekToTotalSeconds(Number(event.target.value))} className="w-full accent-[#61d6bd]" />
+          </div>
+          <span className="min-w-[92px] text-right text-xs tabular-nums text-[#cbd5df]">{formatTime(currentTotalSeconds)} / {formatTime(totalSeconds)}</span>
+        </div>
+      </div>
       {showSettings && (
         <SettingsPanel
           settings={settings}
           saved={settingsSaved}
           onClose={() => setShowSettings(false)}
           onSave={saveSettings}
+          browserVoiceOptions={browserVoiceOptions}
         />
       )}
     </section>
   );
 }
 
-function SettingsPanel({ settings, saved, onClose, onSave }) {
+function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }) {
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55">
       <div className="h-full w-full max-w-md overflow-y-auto border-l border-[#2a3340] bg-[#10161e] p-5 shadow-2xl">
@@ -582,14 +603,25 @@ function SettingsPanel({ settings, saved, onClose, onSave }) {
             <div className="rounded-lg border border-[#2a3340] p-4">
               <p className="mb-3 text-sm font-semibold text-white">No-key local voice</p>
               <label className="block text-sm text-[#cbd5df]">
-                <span className="mb-2 block">Masculine voice</span>
+                <span className="mb-2 block">macOS system voice</span>
                 <select name="systemVoice" defaultValue={settings?.systemVoice || "Reed (English (US))"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                  {systemVoices.map((voice) => <option key={voice} value={voice}>{voice}</option>)}
+                  {(settings.capabilities.systemVoices || []).map((voice) => <option key={voice} value={voice}>{voice}</option>)}
                 </select>
-                <span className="mt-2 block text-xs text-[#9aa8b7]">Works without an API key and can export offline audio on macOS.</span>
+                <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">For a more natural free voice, install an Enhanced or Premium voice in System Settings &gt; Accessibility &gt; Spoken Content &gt; System Voice &gt; Manage Voices.</span>
               </label>
             </div>
           )}
+
+          <div className="rounded-lg border border-[#2a3340] p-4">
+            <p className="mb-3 text-sm font-semibold text-white">Browser Web Speech</p>
+            <label className="block text-sm text-[#cbd5df]">
+              <span className="mb-2 block">Browser voice</span>
+              <select name="browserVoice" defaultValue={settings?.browserVoice || browserVoiceOptions[0]?.value || ""} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
+                {browserVoiceOptions.length ? browserVoiceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">Browser default</option>}
+              </select>
+              <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">Voice quality comes from your browser and operating system. Browser Web Speech is the suggested free default.</span>
+            </label>
+          </div>
 
           <div className="rounded-lg border border-[#2a3340] p-4">
             <p className="mb-3 text-sm font-semibold text-white">OpenAI</p>
@@ -636,6 +668,67 @@ function SettingsPanel({ settings, saved, onClose, onSave }) {
   );
 }
 
+function ReadingControls({ fontSize, setFontSize, lineHeight, setLineHeight, fontFamily, setFontFamily, skipLowConfidence, setSkipLowConfidence }) {
+  return (
+    <div className="space-y-5 text-sm text-[#cbd5df]">
+      <div>
+        <p className="mb-2 flex items-center gap-2 font-medium text-white"><Type className="h-4 w-4" />Text size</p>
+        <div className="flex items-center gap-2">
+          <button aria-label="Decrease font size" onClick={() => setFontSize(Math.max(15, fontSize - 1))} className="border border-[#718190]/70 px-3 py-2 text-lg hover:bg-[#1b222c]">A-</button>
+          <span className="min-w-12 text-center tabular-nums text-xs text-[#9aa8b7]">{fontSize}px</span>
+          <button aria-label="Increase font size" onClick={() => setFontSize(Math.min(23, fontSize + 1))} className="border border-[#718190]/70 px-3 py-2 text-lg hover:bg-[#1b222c]">A+</button>
+        </div>
+      </div>
+      <div>
+        <p className="mb-2 flex items-center gap-2 font-medium text-white"><AlignJustify className="h-4 w-4" />Line spacing</p>
+        <div className="grid grid-cols-3 gap-1">
+          {[{ value: 1.55, label: "Tight" }, { value: 1.8, label: "Comfort" }, { value: 2.05, label: "Open" }].map((option) => <button key={option.value} onClick={() => setLineHeight(option.value)} className={`border px-2 py-2 text-xs ${lineHeight === option.value ? "border-[#61d6bd] text-white" : "border-[#718190]/60 text-[#9aa8b7] hover:bg-[#1b222c]"}`}>{option.label}</button>)}
+        </div>
+      </div>
+      <label className="block">
+        <span className="mb-2 block font-medium text-white">Font family</span>
+        <select value={fontFamily} onChange={(event) => setFontFamily(event.target.value)} className="w-full border border-[#2a3340]/70 bg-[#151a21] px-3 py-2 text-white">
+          <option value="sans">Sans-serif</option>
+          <option value="serif">Serif</option>
+          <option value="dyslexic">OpenDyslexic (if installed)</option>
+        </select>
+      </label>
+      <label className="flex items-start gap-2 border-t border-[#2a3340]/60 pt-4 text-xs leading-5 text-[#cbd5df]">
+        <input type="checkbox" checked={skipLowConfidence} onChange={(event) => setSkipLowConfidence(event.target.checked)} className="mt-1 accent-[#61d6bd]" />
+        <span><span className="block font-medium text-white">Skip flagged chunks during playback</span>Quality flags are advisory and remain visible in the document.</span>
+      </label>
+      <p className="text-xs leading-5 text-[#788694]">Reading width is capped at about 70-80 characters to reduce eye travel.</p>
+    </div>
+  );
+}
+
+function SectionList({ sections, chunkIndex, sectionForChunk, organize, organizing, onSelect }) {
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-white">Document sections</p>
+        <button title="Organize document" onClick={organize} className="border border-[#718190]/70 p-1.5 text-[#9aa8b7] hover:bg-[#1b222c]">{organizing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}</button>
+      </div>
+      <div className="max-h-[calc(100dvh-240px)] space-y-2 overflow-y-auto pr-1">
+        {sections.map((section) => <button key={section.id} onClick={() => onSelect(sectionStart(section))} className={`w-full border p-2 text-left text-xs hover:bg-[#1b222c] ${chunkIndex >= sectionStart(section) && chunkIndex <= sectionEnd(section) ? "border-[#61d6bd]/70 text-white" : "border-[#2a3340]/60 text-[#cbd5df]"}`}><span className="block truncate">{section.title}</span>{sectionForChunk(sectionStart(section))?.summary && <span className="mt-1 block line-clamp-2 text-[#788694]">{section.summary}</span>}</button>)}
+        {!sections.length && <p className="text-xs text-[#9aa8b7]">No sections yet. Organize the document to create them.</p>}
+      </div>
+    </div>
+  );
+}
+
+function BookmarkList({ bookmarks, onSelect }) {
+  return (
+    <div>
+      <p className="mb-3 text-sm font-semibold text-white">Saved bookmarks</p>
+      <div className="space-y-2">
+        {bookmarks?.map((bookmark) => <button key={bookmark.id} onClick={() => onSelect(bookmark.chunk_index)} className="w-full border border-[#2a3340]/60 p-2 text-left text-xs text-[#cbd5df] hover:bg-[#1b222c]">{bookmark.label}</button>)}
+        {!bookmarks?.length && <p className="text-xs text-[#9aa8b7]">No bookmarks saved.</p>}
+      </div>
+    </div>
+  );
+}
+
 function Range({ label, value, onChange, ...props }) {
   return (
     <label className="block text-sm text-[#cbd5df]">
@@ -653,6 +746,23 @@ function Range({ label, value, onChange, ...props }) {
 
 function sectionStart(section) {
   return section.start_chunk ?? section.startChunk ?? 0;
+}
+
+function isLowConfidence(chunk) {
+  return chunk?.quality_status === "low" || Number(chunk?.quality_score ?? 1) < 0.55;
+}
+
+function isQualityFlagged(chunk) {
+  return isLowConfidence(chunk) || chunk?.quality_status === "review";
+}
+
+function qualityReasons(chunk) {
+  if (Array.isArray(chunk?.quality_reasons)) return chunk.quality_reasons;
+  try {
+    return JSON.parse(chunk?.quality_reasons || "[]");
+  } catch {
+    return [];
+  }
 }
 
 function sectionEnd(section) {
