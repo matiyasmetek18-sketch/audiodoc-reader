@@ -1,6 +1,6 @@
 # AudioDoc Reader
 
-[![CI](https://github.com/YOUR_GITHUB_USERNAME/audiodoc-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_GITHUB_USERNAME/audiodoc-reader/actions/workflows/ci.yml)
+[![CI](https://github.com/matiyasmetek18-sketch/audiodoc-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/matiyasmetek18-sketch/audiodoc-reader/actions/workflows/ci.yml)
 
 A full-stack ElevenReader-style app for uploading PDF, DOCX, and TXT files, extracting clean text, and reading documents aloud with chunked, cached text-to-speech.
 
