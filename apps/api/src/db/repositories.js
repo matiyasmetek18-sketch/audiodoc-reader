@@ -1,6 +1,7 @@
 import { v4 as uuid } from "uuid";
 import { env } from "../config/env.js";
 import { openDatabase } from "./schema.js";
+import { scoreChunkQuality } from "../services/textQuality.js";
 
 export const DEMO_USER_ID = "local-demo-user";
 
@@ -29,8 +30,8 @@ export function createDocument(doc, chunks, sections = []) {
     )
   `);
   const insertChunk = db.prepare(`
-    INSERT INTO chunks (id, document_id, chunk_index, text, start_char, end_char, estimated_seconds)
-    VALUES (@id, @document_id, @chunk_index, @text, @start_char, @end_char, @estimated_seconds)
+    INSERT INTO chunks (id, document_id, chunk_index, text, start_char, end_char, estimated_seconds, quality_score, quality_status, quality_reasons)
+    VALUES (@id, @document_id, @chunk_index, @text, @start_char, @end_char, @estimated_seconds, @quality_score, @quality_status, @quality_reasons)
   `);
   const insertSection = db.prepare(`
     INSERT INTO sections (id, document_id, section_index, title, start_chunk, end_chunk, summary)
@@ -69,7 +70,11 @@ export function getDocumentWithChunks(id) {
 }
 
 export function getChunksForDocument(documentId) {
-  return db.prepare("SELECT * FROM chunks WHERE document_id = ? ORDER BY chunk_index").all(documentId);
+  const rows = db.prepare("SELECT * FROM chunks WHERE document_id = ? ORDER BY chunk_index").all(documentId);
+  return rows.map((chunk, index) => {
+    const quality = scoreChunkQuality(chunk.text, { chunkIndex: index, chunkCount: rows.length });
+    return { ...chunk, ...quality };
+  });
 }
 
 export function getSectionsForDocument(documentId, knownChunks = null) {
@@ -196,6 +201,7 @@ export function getAppSettings() {
     openaiTtsVoice: stored.openaiTtsVoice || env.openaiTtsVoice,
     openaiSummaryModel: stored.openaiSummaryModel || env.openaiSummaryModel,
     openaiApiKey: stored.openaiApiKey || env.openaiApiKey,
+    browserVoice: stored.browserVoice || "",
     elevenLabsVoiceId: stored.elevenLabsVoiceId || env.elevenLabsVoiceId,
     elevenLabsModelId: stored.elevenLabsModelId || env.elevenLabsModelId,
     elevenLabsApiKey: stored.elevenLabsApiKey || env.elevenLabsApiKey
@@ -222,6 +228,7 @@ function getPublicSettingsFromStore(settings) {
     openaiTtsModel: settings.openaiTtsModel || env.openaiTtsModel,
     openaiTtsVoice: settings.openaiTtsVoice || env.openaiTtsVoice,
     openaiSummaryModel: settings.openaiSummaryModel || env.openaiSummaryModel,
+    browserVoice: settings.browserVoice || "",
     hasOpenaiApiKey: Boolean(settings.openaiApiKey || env.openaiApiKey),
     elevenLabsVoiceId: settings.elevenLabsVoiceId || env.elevenLabsVoiceId,
     elevenLabsModelId: settings.elevenLabsModelId || env.elevenLabsModelId,
@@ -260,7 +267,10 @@ function toDbChunk(chunk) {
     text: chunk.text,
     start_char: chunk.startChar,
     end_char: chunk.endChar,
-    estimated_seconds: chunk.estimatedSeconds
+    estimated_seconds: chunk.estimatedSeconds,
+    quality_score: chunk.quality_score ?? 1,
+    quality_status: chunk.quality_status ?? "ok",
+    quality_reasons: JSON.stringify(chunk.quality_reasons || [])
   };
 }
 

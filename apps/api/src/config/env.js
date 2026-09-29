@@ -16,7 +16,7 @@ export const env = {
   audioDir: path.resolve(projectRoot, process.env.AUDIO_DIR ?? "./storage/audio"),
   cacheDir: path.resolve(projectRoot, process.env.CACHE_DIR ?? "./storage/cache"),
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 100),
-  ttsProvider: process.env.TTS_PROVIDER ?? "system",
+  ttsProvider: process.env.TTS_PROVIDER ?? "browser",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiTtsModel: process.env.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts",
   openaiTtsVoice: process.env.OPENAI_TTS_VOICE ?? "onyx",

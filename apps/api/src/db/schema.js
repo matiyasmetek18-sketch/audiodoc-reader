@@ -35,6 +35,9 @@ const schema = `
     start_char INTEGER NOT NULL,
     end_char INTEGER NOT NULL,
     estimated_seconds REAL NOT NULL,
+    quality_score REAL NOT NULL DEFAULT 1,
+    quality_status TEXT NOT NULL DEFAULT 'ok',
+    quality_reasons TEXT NOT NULL DEFAULT '[]',
     UNIQUE (document_id, chunk_index),
     FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
   );
@@ -96,5 +99,9 @@ export function openDatabase(databasePath = env.databasePath) {
   database.pragma("foreign_keys = ON");
   database.pragma("journal_mode = WAL");
   database.exec(schema);
+  const columns = new Set(database.prepare("PRAGMA table_info(chunks)").all().map((column) => column.name));
+  if (!columns.has("quality_score")) database.exec("ALTER TABLE chunks ADD COLUMN quality_score REAL NOT NULL DEFAULT 1");
+  if (!columns.has("quality_status")) database.exec("ALTER TABLE chunks ADD COLUMN quality_status TEXT NOT NULL DEFAULT 'ok'");
+  if (!columns.has("quality_reasons")) database.exec("ALTER TABLE chunks ADD COLUMN quality_reasons TEXT NOT NULL DEFAULT '[]'");
   return database;
 }
