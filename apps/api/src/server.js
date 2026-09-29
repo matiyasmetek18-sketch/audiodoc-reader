@@ -23,7 +23,7 @@ app.use(morgan("dev"));
 app.use(attachUser);
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, ttsProvider: env.ttsProvider });
+  res.json({ ok: true, ttsProvider: "kokoro" });
 });
 
 app.use("/api/auth", authRouter);

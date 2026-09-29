@@ -3,43 +3,24 @@ import path from "node:path";
 import { env } from "../../config/env.js";
 import { findAudioCache, findChunk, getAppSettings, saveAudioCache } from "../../db/repositories.js";
 import { hashText } from "../../utils/hash.js";
-import { createBrowserProvider } from "./browserProvider.js";
-import { createOpenAiProvider } from "./openaiProvider.js";
-import { createElevenLabsProvider } from "./elevenLabsProvider.js";
-import { createSystemProvider } from "./systemProvider.js";
-import { detectSystemCapabilities } from "./systemCapabilities.js";
 import { createTestProvider } from "./testProvider.js";
 import { createKokoroProvider, getKokoroCapabilities } from "./kokoroProvider.js";
 
-const systemCapabilities = detectSystemCapabilities();
 const providers = {
-  system: createSystemProvider(systemCapabilities),
-  browser: createBrowserProvider(),
-  openai: createOpenAiProvider(env),
-  elevenlabs: createElevenLabsProvider(env),
   test: createTestProvider(),
   kokoro: createKokoroProvider()
 };
 const inFlightSynthesis = new Map();
 
-export function getTtsProvider(provider = env.ttsProvider) {
-  if (provider === "test" && env.nodeEnv !== "test") return providers.browser;
-  if (provider === "system" && !systemCapabilities.systemVoice) return providers.browser;
-  return providers[provider] ?? providers.browser;
+export function getTtsProvider(provider = "kokoro") {
+  if (provider === "test" && env.nodeEnv === "test") return providers.test;
+  return providers.kokoro;
 }
 
 export function getTtsCapabilities() {
   return {
-    platform: systemCapabilities.platform,
-    systemVoice: systemCapabilities.systemVoice,
-    systemExport: systemCapabilities.systemExport,
-    systemVoices: systemCapabilities.systemVoices,
     kokoro: getKokoroCapabilities(),
     providers: {
-      browser: true,
-      openai: true,
-      elevenlabs: true,
-      system: systemCapabilities.systemVoice,
       kokoro: true
     }
   };
@@ -54,7 +35,7 @@ export async function synthesizeChunk({ documentId, chunkIndex, provider, voice,
     throw error;
   }
 
-  const activeProvider = getTtsProvider(provider || settings.ttsProvider);
+  const activeProvider = getTtsProvider(provider);
   const normalizedVoice = voice || defaultVoice(activeProvider.name, settings);
   const textHash = hashText(`${chunk.text}:${normalizedVoice}:${speed}:${pitch}`);
   const cacheInput = {
@@ -112,9 +93,18 @@ async function synthesizeAndCache({ chunk, activeProvider, normalizedVoice, sett
 }
 
 function defaultVoice(provider, settings) {
-  if (provider === "openai") return settings.openaiTtsVoice || env.openaiTtsVoice;
-  if (provider === "elevenlabs") return settings.elevenLabsVoiceId || env.elevenLabsVoiceId || "deep-calm";
-  if (provider === "system") return settings.systemVoice || "Reed (English (US))";
   if (provider === "kokoro") return settings.kokoroVoice || "af_heart";
-  return "browser-deep";
+  return "af_heart";
+}
+
+export async function synthesizeText({ text, voice = "af_heart", speed = 1, pitch = 0 }) {
+  const activeProvider = getTtsProvider("kokoro");
+  const buffer = await activeProvider.synthesize({
+    text: String(text || ""),
+    voice,
+    speed: Number(speed),
+    pitch: Number(pitch),
+    settings: getAppSettings()
+  });
+  return { buffer, provider: activeProvider.name, voice };
 }

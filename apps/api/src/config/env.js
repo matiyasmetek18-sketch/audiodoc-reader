@@ -17,12 +17,6 @@ export const env = {
   cacheDir: path.resolve(projectRoot, process.env.CACHE_DIR ?? "./storage/cache"),
   kokoroModelDir: path.resolve(projectRoot, process.env.KOKORO_MODEL_DIR ?? "./storage/models/kokoro"),
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 100),
-  ttsProvider: process.env.TTS_PROVIDER ?? "browser",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
-  openaiTtsModel: process.env.OPENAI_TTS_MODEL ?? "gpt-4o-mini-tts",
-  openaiTtsVoice: process.env.OPENAI_TTS_VOICE ?? "onyx",
-  openaiSummaryModel: process.env.OPENAI_SUMMARY_MODEL ?? "gpt-4.1-mini",
-  elevenLabsApiKey: process.env.ELEVENLABS_API_KEY ?? "",
-  elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID ?? "",
-  elevenLabsModelId: process.env.ELEVENLABS_MODEL_ID ?? "eleven_multilingual_v2"
+  openaiSummaryModel: process.env.OPENAI_SUMMARY_MODEL ?? "gpt-4.1-mini"
 };

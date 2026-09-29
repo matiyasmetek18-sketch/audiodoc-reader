@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 
 const baseUrl = process.env.AUDIODOC_URL || "http://localhost:4000";
 const fixturePath = process.env.STRESS_FILE;
-const provider = process.env.STRESS_PROVIDER || "system";
-const voice = process.env.STRESS_VOICE || "Samantha";
+const provider = process.env.STRESS_PROVIDER || "test";
+const voice = process.env.STRESS_VOICE || "af_heart";
 
 if (!fixturePath) {
   throw new Error("Set STRESS_FILE to a small TXT fixture before running this script.");

@@ -157,7 +157,6 @@ documentsRouter.post(
     if (!document) throw notFound("Document not found.");
     const result = await generateAudiobook({
       documentId: req.params.id,
-      provider: req.body.provider,
       voice: req.body.voice,
       speed: Number(req.body.speed ?? 1),
       pitch: Number(req.body.pitch ?? 0)

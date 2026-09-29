@@ -195,17 +195,9 @@ export function savePodcastScript(documentId, script) {
 export function getAppSettings() {
   const stored = Object.fromEntries(db.prepare("SELECT key, value FROM app_settings").all().map((row) => [row.key, row.value]));
   return {
-    ttsProvider: stored.ttsProvider || env.ttsProvider,
-    systemVoice: stored.systemVoice || "Reed (English (US))",
-    openaiTtsModel: stored.openaiTtsModel || env.openaiTtsModel,
-    openaiTtsVoice: stored.openaiTtsVoice || env.openaiTtsVoice,
     openaiSummaryModel: stored.openaiSummaryModel || env.openaiSummaryModel,
     openaiApiKey: stored.openaiApiKey || env.openaiApiKey,
-    browserVoice: stored.browserVoice || "",
-    kokoroVoice: stored.kokoroVoice || "af_heart",
-    elevenLabsVoiceId: stored.elevenLabsVoiceId || env.elevenLabsVoiceId,
-    elevenLabsModelId: stored.elevenLabsModelId || env.elevenLabsModelId,
-    elevenLabsApiKey: stored.elevenLabsApiKey || env.elevenLabsApiKey
+    kokoroVoice: stored.kokoroVoice || "af_heart"
   };
 }
 
@@ -224,17 +216,9 @@ export function updateAppSettings(nextSettings) {
 
 function getPublicSettingsFromStore(settings) {
   return {
-    ttsProvider: settings.ttsProvider || env.ttsProvider,
-    systemVoice: settings.systemVoice || "Reed (English (US))",
-    openaiTtsModel: settings.openaiTtsModel || env.openaiTtsModel,
-    openaiTtsVoice: settings.openaiTtsVoice || env.openaiTtsVoice,
     openaiSummaryModel: settings.openaiSummaryModel || env.openaiSummaryModel,
-    browserVoice: settings.browserVoice || "",
     kokoroVoice: settings.kokoroVoice || "af_heart",
     hasOpenaiApiKey: Boolean(settings.openaiApiKey || env.openaiApiKey),
-    elevenLabsVoiceId: settings.elevenLabsVoiceId || env.elevenLabsVoiceId,
-    elevenLabsModelId: settings.elevenLabsModelId || env.elevenLabsModelId,
-    hasElevenLabsApiKey: Boolean(settings.elevenLabsApiKey || env.elevenLabsApiKey)
   };
 }
 

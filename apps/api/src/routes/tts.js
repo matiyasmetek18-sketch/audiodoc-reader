@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { Router } from "express";
 import { env } from "../config/env.js";
 import { asyncHandler } from "../utils/errors.js";
-import { synthesizeChunk } from "../services/tts/index.js";
+import { synthesizeChunk, synthesizeText } from "../services/tts/index.js";
 
 export const ttsRouter = Router();
 
@@ -30,6 +30,28 @@ ttsRouter.post(
 );
 
 export const audioRouter = Router();
+
+ttsRouter.post(
+  "/text",
+  asyncHandler(async (req, res) => {
+    const text = String(req.body.text || "").trim();
+    if (!text) {
+      const error = new Error("Text is required.");
+      error.status = 422;
+      throw error;
+    }
+    const result = await synthesizeText({
+      text,
+      voice: req.body.voice || "af_heart",
+      speed: Number(req.body.speed ?? 1),
+      pitch: Number(req.body.pitch ?? 0)
+    });
+    const fileName = `kokoro-text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`;
+    await fs.promises.mkdir(env.audioDir, { recursive: true });
+    await fs.promises.writeFile(path.join(env.audioDir, fileName), result.buffer);
+    res.json({ audioUrl: `/api/audio/${fileName}`, durationSeconds: null });
+  })
+);
 
 audioRouter.get(
   "/:file",

@@ -22,58 +22,13 @@ import {
 import { api, audioUrl } from "../lib/api";
 import { formatTime } from "../lib/format";
 
-const openAiVoices = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"];
-const recommendedOpenAiVoices = new Set(["marin", "cedar", "shimmer"]);
-const recommendedSystemVoicePatterns = [/^Ava\b/i, /^Samantha\b/i, /^Alex\b/i, /^Daniel\b/i];
-const recommendedBrowserVoicePatterns = [
-  /Microsoft Aria.*Natural/i,
-  /Microsoft Jenny.*Natural/i,
-  /Google US English/i,
-  /^Samantha\b/i,
-  /^Alex\b/i
-];
-const fallbackBrowserVoice = { label: "Browser default", value: "", provider: "browser" };
 const kokoroVoices = ["af_heart", "af_bella", "am_michael"];
-const providerVoices = [
-  ...openAiVoices.map((voice) => ({ label: `OpenAI ${voice}`, value: voice, provider: "openai" })),
-  { label: "ElevenLabs deep", value: "", provider: "elevenlabs" }
-];
+const fallbackKokoroVoice = { label: "Kokoro af_heart", value: "af_heart", provider: "kokoro" };
 
 function voiceForProvider(provider, value, available) {
   return available.find((item) => item.provider === provider && (item.value === value || item.voiceName === value))
     || available.find((item) => item.provider === provider)
-    || available.find((item) => item.provider === "browser")
-    || fallbackBrowserVoice;
-}
-
-function preferredBrowserVoice(voices) {
-  return voices.find((voice) => recommendedBrowserVoicePatterns.some((pattern) => pattern.test(voice.name)) && /^en(-|_)(US|GB)/i.test(voice.lang))
-    || voices.find((voice) => /^en(-|_)US/i.test(voice.lang))
-    || voices[0];
-}
-
-function isRecommendedVoice(item) {
-  if (item.provider === "system") return recommendedSystemVoicePatterns.some((pattern) => pattern.test(item.voiceName || item.value));
-  if (item.provider === "browser") return recommendedBrowserVoicePatterns.some((pattern) => pattern.test(item.voiceName || item.value));
-  if (item.provider === "openai") return recommendedOpenAiVoices.has(item.value);
-  if (item.provider === "kokoro") return kokoroVoices.includes(item.value);
-  return false;
-}
-
-function visibleVoiceOptions(options, showAll, selectedValue) {
-  if (showAll) return options;
-  const providers = [...new Set(options.map((item) => item.provider))];
-  const visible = providers.flatMap((provider) => {
-    const providerOptions = options.filter((item) => item.provider === provider);
-    const recommended = providerOptions.filter(isRecommendedVoice);
-    return recommended.length ? recommended : providerOptions;
-  });
-  const selected = options.find((item) => `${item.provider}:${item.value}` === selectedValue);
-  return selected && !visible.some((item) => `${item.provider}:${item.value}` === selectedValue) ? [selected, ...visible] : visible;
-}
-
-function hasRecommendedVoice(options, provider) {
-  return options.some((item) => item.provider === provider && isRecommendedVoice(item));
+    || fallbackKokoroVoice;
 }
 
 function tokenizeWords(text = "") {
@@ -121,47 +76,29 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   const [fontFamily, setFontFamily] = useState("sans");
   const [skipLowConfidence, setSkipLowConfidence] = useState(false);
   const [sidebarTab, setSidebarTab] = useState("playback");
-  const [voice, setVoice] = useState(fallbackBrowserVoice);
-  const [showAllVoices, setShowAllVoices] = useState(false);
+  const [voice, setVoice] = useState(fallbackKokoroVoice);
   const [activeWordIndex, setActiveWordIndex] = useState(-1);
-  const [browserVoices, setBrowserVoices] = useState([]);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [elapsed, setElapsed] = useState(document.current_offset_seconds || 0);
   const [podcast, setPodcast] = useState(null);
   const [settings, setSettings] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [modelDownloadState, setModelDownloadState] = useState("idle");
   const [localSections, setLocalSections] = useState(sections);
   const [organizing, setOrganizing] = useState(false);
   const [downloadState, setDownloadState] = useState({ status: "idle", message: "", url: "" });
-  const browserVoiceOptions = useMemo(
-    () => browserVoices.map((item) => ({
-      label: `Browser ${item.name} (${item.lang})`,
-      value: item.voiceURI || item.name,
-      voiceName: item.name,
-      provider: "browser"
-    })),
-    [browserVoices]
-  );
-  const availableVoices = useMemo(() => [
-    ...(settings?.capabilities?.systemVoice ? (settings.capabilities.systemVoices || []).map((item) => ({ label: `Local Mac ${item}`, value: item, provider: "system" })) : []),
-    ...(browserVoiceOptions.length ? browserVoiceOptions : [fallbackBrowserVoice]),
-    ...providerVoices,
-    ...(settings?.capabilities?.kokoro ? (settings.capabilities.kokoro.voices || kokoroVoices).map((item) => ({ label: `Kokoro ${item}`, value: item, provider: "kokoro" })) : [])
-  ], [browserVoiceOptions, settings?.capabilities?.kokoro, settings?.capabilities?.systemVoice, settings?.capabilities?.systemVoices]);
-  const visibleVoices = useMemo(
-    () => visibleVoiceOptions(availableVoices, showAllVoices, `${voice.provider}:${voice.value}`),
-    [availableVoices, showAllVoices, voice]
+  const availableVoices = useMemo(
+    () => (settings?.capabilities?.kokoro?.voices || kokoroVoices).map((item) => ({ label: `Kokoro ${item}`, value: item, provider: "kokoro" })),
+    [settings?.capabilities?.kokoro]
   );
   const audioRef = useRef(null);
-  const utteranceRef = useRef(null);
   const activeRef = useRef(null);
   const isPlayingRef = useRef(false);
   const chunkIndexRef = useRef(document.current_chunk || 0);
   const activeChunksRef = useRef(chunks);
   const podcastRef = useRef(null);
   const documentChunkRef = useRef(document.current_chunk || 0);
-  const speechTimerRef = useRef(null);
 
   const activeChunks = podcast?.chunks || chunks;
   const activeSections = podcast ? [] : localSections;
@@ -190,23 +127,6 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     setActiveWordIndex(wordIndexAtProgress(activeChunk?.text || "", seconds, duration));
   }
 
-  function clearSpeechTimer() {
-    if (speechTimerRef.current) window.clearInterval(speechTimerRef.current);
-    speechTimerRef.current = null;
-  }
-
-  function startSpeechTimer(text) {
-    clearSpeechTimer();
-    const duration = estimatedChunkDuration(text);
-    const startedAt = performance.now() - (elapsed * 1000);
-    speechTimerRef.current = window.setInterval(() => {
-      if (!isPlayingRef.current) return;
-      const seconds = Math.min(duration, (performance.now() - startedAt) / 1000);
-      setElapsed(seconds);
-      updateEstimatedWord(seconds, duration);
-    }, 80);
-  }
-
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
     // Reset karaoke state when the active chunk changes.
@@ -222,16 +142,6 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   }, [activeChunks, chunkIndex, podcast]);
 
   useEffect(() => {
-    function refreshBrowserVoices() {
-      setBrowserVoices(window.speechSynthesis.getVoices());
-    }
-
-    refreshBrowserVoices();
-    window.speechSynthesis.addEventListener("voiceschanged", refreshBrowserVoices);
-    return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshBrowserVoices);
-  }, []);
-
-  useEffect(() => {
     api("/api/settings")
       .then((data) => setSettings(data.settings))
       .catch(() => {});
@@ -239,23 +149,10 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
 
   useEffect(() => {
     if (!settings) return;
-    const capabilities = settings.capabilities;
-    let nextVoice;
-    if (settings.ttsProvider === "openai" && settings.hasOpenaiApiKey) {
-      nextVoice = voiceForProvider("openai", settings.openaiTtsVoice, availableVoices);
-    } else if (settings.ttsProvider === "elevenlabs" && settings.hasElevenLabsApiKey) {
-      nextVoice = voiceForProvider("elevenlabs", settings.elevenLabsVoiceId, availableVoices);
-    } else if (settings.ttsProvider === "system" && capabilities?.systemVoice) {
-      nextVoice = voiceForProvider("system", settings.systemVoice, availableVoices);
-    } else if (settings.ttsProvider === "kokoro" && capabilities?.kokoro) {
-      nextVoice = voiceForProvider("kokoro", settings.kokoroVoice, availableVoices);
-    } else {
-      const recommended = preferredBrowserVoice(browserVoices);
-      nextVoice = voiceForProvider("browser", settings.browserVoice || recommended?.voiceURI || recommended?.name, availableVoices);
-    }
+    const nextVoice = voiceForProvider("kokoro", settings.kokoroVoice, availableVoices);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVoice(nextVoice);
-  }, [availableVoices, browserVoices, settings]);
+  }, [availableVoices, settings]);
 
   useEffect(() => {
     // Reset reader-local state when switching to a different document.
@@ -282,69 +179,34 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     }
     setIsPlaying(true);
     isPlayingRef.current = true;
-    if (voice.provider === "browser" || podcast) {
-      speakInBrowser(activeChunk.text);
-      return;
-    }
-
     setLoadingAudio(true);
+    const firstUse = !settings?.capabilities?.kokoro?.available;
+    if (firstUse) setModelDownloadState("downloading");
     try {
-      const data = await api("/api/tts/chunk", {
+      const data = await api(podcast ? "/api/tts/text" : "/api/tts/chunk", {
         method: "POST",
-        body: JSON.stringify({
-          documentId: document.id,
-          chunkIndex,
-          provider: voice.provider,
-          voice: voice.value,
-          speed,
-          pitch
-        })
+        body: JSON.stringify(podcast
+          ? { text: activeChunk.text, voice: voice.value, speed, pitch }
+          : { documentId: document.id, chunkIndex, voice: voice.value, speed, pitch })
       });
+      setModelDownloadState("ready");
       const audio = audioRef.current;
       audio.src = audioUrl(data.audioUrl);
       audio.playbackRate = speed;
       audio.currentTime = Math.min(elapsed, Number(data.durationSeconds || 0));
       await audio.play();
     } catch (error) {
-      window.alert(`${error.message}. Falling back to browser speech.`);
-      speakInBrowser(activeChunk.text);
+      if (firstUse) setModelDownloadState("error");
+      window.alert(error.message);
     } finally {
       setLoadingAudio(false);
     }
-  }
-
-  function speakInBrowser(text) {
-    window.speechSynthesis.cancel();
-    setActiveWordIndex(wordIndexAtProgress(text, elapsed, estimatedChunkDuration(text)));
-    const utterance = new SpeechSynthesisUtterance(text);
-    const selected = browserVoices.find((candidate) => (candidate.voiceURI || candidate.name) === voice.value || candidate.name === voice.voiceName)
-      || preferredBrowserVoice(browserVoices);
-    utterance.voice = selected || null;
-    if (selected?.lang) utterance.lang = selected.lang;
-    utterance.rate = speed;
-    utterance.pitch = 1 + pitch;
-    utterance.onend = () => {
-      clearSpeechTimer();
-      nextChunk();
-    };
-    utterance.onboundary = (event) => {
-      if (event.name === "word") {
-        const offset = Number(event.charIndex || 0);
-        setActiveWordIndex(wordIndexAtOffset(text, offset));
-        setElapsed(Math.min(estimatedChunkDuration(text), (offset / Math.max(text.length, 1)) * estimatedChunkDuration(text)));
-      }
-    };
-    utteranceRef.current = utterance;
-    window.speechSynthesis.speak(utterance);
-    startSpeechTimer(text);
   }
 
   function pause() {
     setIsPlaying(false);
     isPlayingRef.current = false;
     audioRef.current?.pause();
-    clearSpeechTimer();
-    window.speechSynthesis.pause();
     saveProgress(chunkIndex, elapsed);
   }
 
@@ -352,13 +214,10 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     setIsPlaying(false);
     isPlayingRef.current = false;
     audioRef.current?.pause();
-    clearSpeechTimer();
     setActiveWordIndex(-1);
-    window.speechSynthesis.cancel();
   }
 
   function nextChunk() {
-    clearSpeechTimer();
     const currentIndex = chunkIndexRef.current;
     const currentChunks = activeChunksRef.current;
     const next = skipLowConfidence ? findPlayableIndex(currentIndex, 1) : Math.min(currentChunks.length - 1, currentIndex + 1);
@@ -379,13 +238,11 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     isPlayingRef.current = true;
     setIsPlaying(true);
     const currentChunks = activeChunksRef.current;
-    if (voice.provider === "browser" || podcastRef.current) {
-      speakInBrowser(currentChunks[index].text);
-      return;
-    }
-    const data = await api("/api/tts/chunk", {
+    const data = await api(podcastRef.current ? "/api/tts/text" : "/api/tts/chunk", {
       method: "POST",
-      body: JSON.stringify({ documentId: document.id, chunkIndex: index, provider: voice.provider, voice: voice.value, speed, pitch })
+      body: JSON.stringify(podcastRef.current
+        ? { text: currentChunks[index].text, voice: voice.value, speed, pitch }
+        : { documentId: document.id, chunkIndex: index, voice: voice.value, speed, pitch })
     });
     audioRef.current.src = audioUrl(data.audioUrl);
     audioRef.current.playbackRate = speed;
@@ -394,7 +251,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
 
   function skipBySeconds(seconds) {
     const audio = audioRef.current;
-    if (voice.provider !== "browser" && audio?.src) {
+    if (audio?.src) {
       audio.currentTime = Math.max(0, audio.currentTime + seconds);
       setElapsed(audio.currentTime);
       updateEstimatedWord(audio.currentTime, audio.duration || estimatedChunkDuration());
@@ -419,11 +276,10 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     }
     setChunkIndex(nextIndex);
     setElapsed(offset);
-    if (voice.provider !== "browser" && audioRef.current?.src && nextIndex === chunkIndex) {
+    if (audioRef.current?.src && nextIndex === chunkIndex) {
       audioRef.current.currentTime = offset;
       updateEstimatedWord(offset, audioRef.current.duration || Number(activeChunks[nextIndex].estimated_seconds || activeChunks[nextIndex].estimatedSeconds || 1) / speed);
     } else if (isPlaying) {
-      window.speechSynthesis.cancel();
       setTimeout(() => playChunk(nextIndex), 50);
     }
   }
@@ -482,37 +338,16 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     });
     setSettings(data.settings);
     setSettingsSaved(true);
-    const nextProvider = data.settings.ttsProvider;
-    if (nextProvider === "openai") {
-      setVoice(voiceForProvider("openai", data.settings.openaiTtsVoice, availableVoices));
-    } else if (nextProvider === "elevenlabs") {
-      setVoice(voiceForProvider("elevenlabs", data.settings.elevenLabsVoiceId, availableVoices));
-    } else if (nextProvider === "system" && data.settings.capabilities?.systemVoice) {
-      setVoice(voiceForProvider("system", data.settings.systemVoice, availableVoices));
-    } else if (nextProvider === "kokoro") {
-      setVoice(voiceForProvider("kokoro", data.settings.kokoroVoice, availableVoices));
-    } else {
-      const recommended = preferredBrowserVoice(browserVoices);
-      setVoice(voiceForProvider("browser", data.settings.browserVoice || recommended?.voiceURI || recommended?.name, availableVoices));
-    }
+    setVoice(voiceForProvider("kokoro", data.settings.kokoroVoice, availableVoices));
   }
 
   async function generateDownload() {
-    if (voice.provider === "browser") {
-      setDownloadState({
-        status: "error",
-        message: "Choose Local Mac, OpenAI, or ElevenLabs first. Browser speech cannot be exported.",
-        url: ""
-      });
-      return;
-    }
-
     setDownloadState({ status: "working", message: "Generating offline audio. Large PDFs can take a while.", url: "" });
     try {
       const result = await api(`/api/documents/${document.id}/audio-download`, {
         method: "POST",
         body: JSON.stringify({
-          provider: voice.provider,
+          provider: "kokoro",
           voice: voice.value,
           speed,
           pitch
@@ -630,18 +465,15 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
               <div className="space-y-4">
                 <label className="block text-sm text-[#cbd5df]">
                   <span className="mb-2 flex items-center gap-2"><Volume2 className="h-4 w-4" />Voice</span>
-                  <select value={`${voice.provider}:${voice.value}`} onChange={(event) => setVoice(availableVoices.find((item) => `${item.provider}:${item.value}` === event.target.value) || fallbackBrowserVoice)} className="w-full rounded-md border border-[#2a3340]/70 bg-[#151a21] px-3 py-2 text-white">
-                    {visibleVoices.map((item) => <option key={`${item.provider}:${item.value}`} value={`${item.provider}:${item.value}`}>{item.label}</option>)}
+                  <select value={`${voice.provider}:${voice.value}`} onChange={(event) => setVoice(availableVoices.find((item) => `${item.provider}:${item.value}` === event.target.value) || fallbackKokoroVoice)} className="w-full rounded-md border border-[#2a3340]/70 bg-[#151a21] px-3 py-2 text-white">
+                    {availableVoices.map((item) => <option key={`${item.provider}:${item.value}`} value={`${item.provider}:${item.value}`}>{item.label}</option>)}
                   </select>
-                  <label className="mt-2 flex items-center gap-2 text-xs text-[#9aa8b7]">
-                    <input type="checkbox" checked={showAllVoices} onChange={(event) => setShowAllVoices(event.target.checked)} className="accent-[#61d6bd]" />
-                    Show all voices
-                  </label>
-                  {!showAllVoices && !hasRecommendedVoice(availableVoices, voice.provider) && <p className="mt-2 text-xs leading-5 text-[#d8ae6a]">No curated voice is installed for this provider, so all available voices are shown.</p>}
+                  <p className="mt-2 text-xs leading-5 text-[#9aa8b7]">Kokoro runs locally with the downloaded neural voice model.</p>
                 </label>
                 <Range label={`Speed ${speed.toFixed(2)}x`} min="0.75" max="2" step="0.05" value={speed} onChange={setSpeed} />
                 <Range label={`Pitch ${pitch.toFixed(2)}`} min="-0.2" max="0.2" step="0.01" value={pitch} onChange={setPitch} />
-                {voice.provider === "openai" && !settings?.hasOpenaiApiKey && <button onClick={() => setShowSettings(true)} className="w-full rounded-md border border-[#614426]/70 bg-[#22170b]/70 p-3 text-left text-xs text-[#f0d7ad]">Add your OpenAI API key in Settings to use hosted voices.</button>}
+                {modelDownloadState === "downloading" && <p className="border border-[#61d6bd]/40 bg-[#132520] p-3 text-xs leading-5 text-[#b8f3e6]">Downloading voice model (about 86 MB). The first playback may take a moment.</p>}
+                {modelDownloadState === "error" && <p className="border border-red-400/40 bg-red-950/30 p-3 text-xs leading-5 text-red-200">The Kokoro voice model could not be downloaded. Check your connection and try again.</p>}
                 <div className="border border-[#2a3340]/60 p-3">
                   <button onClick={generateDownload} disabled={downloadState.status === "working"} className="flex w-full items-center justify-center gap-2 rounded-md border border-[#718190]/70 px-3 py-2 text-sm text-[#d6dde5] hover:bg-[#1b222c] disabled:opacity-60">
                     {downloadState.status === "working" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -690,19 +522,13 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
           saved={settingsSaved}
           onClose={() => setShowSettings(false)}
           onSave={saveSettings}
-          browserVoiceOptions={browserVoiceOptions}
-          systemVoiceOptions={settings?.capabilities?.systemVoice ? (settings.capabilities.systemVoices || []).map((item) => ({ label: item, value: item, voiceName: item, provider: "system" })) : []}
-          showAllVoices={showAllVoices}
-          setShowAllVoices={setShowAllVoices}
         />
       )}
     </section>
   );
 }
 
-function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions, systemVoiceOptions, showAllVoices, setShowAllVoices }) {
-  const systemOptions = visibleVoiceOptions(systemVoiceOptions, showAllVoices, `system:${settings?.systemVoice || ""}`);
-  const browserOptions = visibleVoiceOptions(browserVoiceOptions, showAllVoices, `browser:${settings?.browserVoice || ""}`);
+function SettingsPanel({ settings, saved, onClose, onSave }) {
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55">
       <div className="h-full w-full max-w-md overflow-y-auto border-l border-[#2a3340] bg-[#10161e] p-5 shadow-2xl">
@@ -716,11 +542,6 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions, 
           </button>
         </div>
 
-        <label className="mb-4 flex items-center gap-2 text-xs text-[#9aa8b7]">
-          <input type="checkbox" checked={showAllVoices} onChange={(event) => setShowAllVoices(event.target.checked)} className="accent-[#61d6bd]" />
-          Show all detected voices
-        </label>
-
         <form
           className="space-y-4"
           onSubmit={async (event) => {
@@ -728,46 +549,8 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions, 
             const form = event.currentTarget;
             await onSave(new FormData(form));
             event.currentTarget.openaiApiKey.value = "";
-            event.currentTarget.elevenLabsApiKey.value = "";
           }}
         >
-          <label className="block text-sm text-[#cbd5df]">
-            <span className="mb-2 block">Default TTS provider</span>
-            <select name="ttsProvider" defaultValue={settings?.ttsProvider || "browser"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-              {settings?.capabilities?.systemVoice && <option value="system">Local Mac voice</option>}
-              <option value="browser">Browser Web Speech</option>
-              {settings?.capabilities?.kokoro && <option value="kokoro">Kokoro {settings.capabilities.kokoro.available ? "(ready)" : "(download on first use)"}</option>}
-              <option value="openai">OpenAI</option>
-              <option value="elevenlabs">ElevenLabs</option>
-            </select>
-          </label>
-
-          {settings?.capabilities?.systemVoice && (
-            <div className="rounded-lg border border-[#2a3340] p-4">
-              <p className="mb-3 text-sm font-semibold text-white">No-key local voice</p>
-              <label className="block text-sm text-[#cbd5df]">
-                <span className="mb-2 block">macOS system voice</span>
-                <select name="systemVoice" defaultValue={settings?.systemVoice || "Reed (English (US))"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                  {systemOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
-                {!showAllVoices && !hasRecommendedVoice(systemVoiceOptions, "system") && <span className="mt-2 block text-xs leading-5 text-[#d8ae6a]">No curated voice is installed, so all available local voices are shown.</span>}
-                <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">For a more natural free voice, install an Enhanced or Premium voice in System Settings &gt; Accessibility &gt; Spoken Content &gt; System Voice &gt; Manage Voices.</span>
-              </label>
-            </div>
-          )}
-
-          <div className="rounded-lg border border-[#2a3340] p-4">
-            <p className="mb-3 text-sm font-semibold text-white">Browser Web Speech</p>
-            <label className="block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">Browser voice</span>
-              <select name="browserVoice" defaultValue={settings?.browserVoice || browserVoiceOptions[0]?.value || ""} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                {browserOptions.length ? browserOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">Browser default</option>}
-              </select>
-              {!showAllVoices && browserVoiceOptions.length > 0 && !hasRecommendedVoice(browserVoiceOptions, "browser") && <span className="mt-2 block text-xs leading-5 text-[#d8ae6a]">No curated voice is installed, so all available browser voices are shown.</span>}
-              <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">Voice quality comes from your browser and operating system. Browser Web Speech is the suggested free default.</span>
-            </label>
-          </div>
-
           <div className="rounded-lg border border-[#2a3340] p-4">
             <p className="mb-3 text-sm font-semibold text-white">Kokoro local neural voice</p>
             <label className="block text-sm text-[#cbd5df]">
@@ -780,38 +563,16 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions, 
           </div>
 
           <div className="rounded-lg border border-[#2a3340] p-4">
-            <p className="mb-3 text-sm font-semibold text-white">OpenAI</p>
+            <p className="mb-3 text-sm font-semibold text-white">Optional AI summaries</p>
             <label className="mb-3 block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">API key {settings?.hasOpenaiApiKey ? "(saved)" : ""}</span>
+              <span className="mb-2 block">OpenAI API key {settings?.hasOpenaiApiKey ? "(saved)" : ""}</span>
               <input name="openaiApiKey" type="password" placeholder="sk-..." className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white" />
             </label>
-            <label className="mb-3 block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">Model</span>
-              <input name="openaiTtsModel" defaultValue={settings?.openaiTtsModel || "gpt-4o-mini-tts"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white" />
-            </label>
             <label className="block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">Default voice</span>
-              <select name="openaiTtsVoice" defaultValue={settings?.openaiTtsVoice || "onyx"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                {visibleVoiceOptions(providerVoices.filter((item) => item.provider === "openai"), showAllVoices, `openai:${settings?.openaiTtsVoice || ""}`).map((item) => <option key={item.value} value={item.value}>{item.value}</option>)}
-              </select>
-              <span className="mt-2 block text-xs text-[#9aa8b7]">OpenAI currently recommends `marin` or `cedar` for best quality.</span>
+              <span className="mb-2 block">Summary model</span>
+              <input name="openaiSummaryModel" defaultValue={settings?.openaiSummaryModel || "gpt-4.1-mini"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white" />
             </label>
-          </div>
-
-          <div className="rounded-lg border border-[#2a3340] p-4">
-            <p className="mb-3 text-sm font-semibold text-white">ElevenLabs</p>
-            <label className="mb-3 block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">API key {settings?.hasElevenLabsApiKey ? "(saved)" : ""}</span>
-              <input name="elevenLabsApiKey" type="password" placeholder="ElevenLabs API key" className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white" />
-            </label>
-            <label className="mb-3 block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">Voice ID</span>
-              <input name="elevenLabsVoiceId" defaultValue={settings?.elevenLabsVoiceId || ""} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white" />
-            </label>
-            <label className="block text-sm text-[#cbd5df]">
-              <span className="mb-2 block">Model</span>
-              <input name="elevenLabsModelId" defaultValue={settings?.elevenLabsModelId || "eleven_multilingual_v2"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white" />
-            </label>
+            <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">Kokoro handles all voice playback. This key is only for optional podcast and section summaries.</span>
           </div>
 
           <button className="flex w-full items-center justify-center gap-2 rounded-md bg-[#61d6bd] px-4 py-3 font-semibold text-[#07100d] hover:bg-[#73e4cd]">

@@ -24,14 +24,12 @@ The stress figures above come from local runs on this checkout and use a small h
 - Text extraction, cleanup, and AI-assisted section organization for long documents
 - Local text-quality heuristics flag likely OCR garbage and non-narrative front/back matter without silently deleting content
 - SQLite metadata store, local file storage, and cached audio chunks
-- Modular TTS providers: browser Web Speech (suggested free default), no-key local macOS voices, OpenAI, or ElevenLabs
-- Optional Kokoro local neural TTS provider using an approximately 86 MB quantized ONNX model and no paid API
-- Full installed voice selection for macOS `say` and browser Web Speech, with natural punctuation-preserving chunking
+- Kokoro-only local neural TTS using the `af_heart`, `af_bella`, and `am_michael` voices
 - Streaming chunk playback with play/pause, skip, progress, speed, and pitch controls
 - Sentence/chunk highlighting, smooth scroll, resume position, bookmarks, and estimated reading time
 - Podcast mode that creates a two-voice conversational script and reads it chunk-by-chunk
 - Dark, mobile-responsive React/Next.js interface
-- Offline MP3 export for OpenAI or ElevenLabs voices
+- Offline WAV export from Kokoro
 
 ## Project Structure
 
@@ -72,25 +70,21 @@ Backend: http://localhost:4000
 
 The CI workflow runs `npm run lint`, `npm run build`, and the deterministic API stress checks on every push and pull request. The badge above uses a placeholder GitHub owner because this checkout does not currently have a Git remote configured; replace `YOUR_GITHUB_USERNAME/audiodoc-reader` with the published repository path when you push it.
 
-The local system-voice provider uses macOS-only `say` and `zip` executables. AudioDoc feature-detects them at startup; on other operating systems it hides the local provider and falls back to browser speech. OpenAI, ElevenLabs, and browser Web Speech are the cross-platform options. Browser Web Speech is the suggested free default because Chrome and Edge often provide more natural voices than the basic macOS `say` voice. On macOS, `say -v ?` supplies the installed voice list; for better free local quality, download an Enhanced or Premium voice from System Settings → Accessibility → Spoken Content → System Voice → Manage Voices. For hosted TTS, open the app Settings panel and paste your API key, or set `TTS_PROVIDER=openai` / `TTS_PROVIDER=elevenlabs` in `.env` with the matching key. Runtime settings are stored in SQLite and do not require restarting the app. With `TTS_PROVIDER=browser`, the app uses the browser Web Speech API and does not generate downloadable audio.
-
-Kokoro is an optional local neural provider. It remains marked unavailable until its q8f16 ONNX model is downloaded; selecting Kokoro and starting playback downloads the model lazily into `storage/models/kokoro/` (about 86 MB), which is ignored by Git and is not part of normal CI. Kokoro outputs WAV audio locally on CPU and uses sentence streaming for long chunks. The manually triggered `Kokoro Smoke Test` workflow downloads or restores the model cache and verifies non-empty WAV output without slowing the normal CI workflow.
-
-OpenAI voices available in the UI: `alloy`, `ash`, `ballad`, `cedar`, `coral`, `echo`, `fable`, `marin`, `nova`, `onyx`, `sage`, `shimmer`, and `verse`. OpenAI’s current docs recommend `marin` or `cedar` for best quality.
+Kokoro is the only speech provider. It downloads its q8f16 ONNX model lazily on first playback into `storage/models/kokoro/` (about 86 MB), which is ignored by Git and excluded from normal CI. The reader shows a clear “Downloading voice model” state while this happens. Kokoro runs locally on CPU and supports `af_heart`, `af_bella`, and `am_michael`; no paid TTS API is required. Optional OpenAI configuration is used only for podcast and section summaries, never for speech.
 
 ## Screenshots
 
 Suggested portfolio captures can live in `docs/screenshots/`:
 
 - `library-and-reader.png`: the document library beside an active highlighted passage.
-- `settings-and-providers.png`: the provider settings panel showing browser, OpenAI, and ElevenLabs options.
+- `settings-and-providers.png`: the Kokoro voice settings panel showing the first-use model download state.
 - `podcast-mode.png`: the conversational podcast view with playback controls.
 
 These are intentionally placeholders rather than generated claims about the UI; capture them from a running local instance before publishing the project.
 
 ## API Routes
 
-- `GET /health` API health check and active environment TTS provider
+- `GET /health` API health check and Kokoro provider status
 - `POST /api/auth/login` basic local login, returns a demo token
 - `GET /api/documents` list uploaded files and reading progress
 - `POST /api/documents` upload PDF/DOCX/TXT
@@ -99,10 +93,11 @@ These are intentionally placeholders rather than generated claims about the UI; 
 - `PATCH /api/documents/:id/progress` save resume position
 - `POST /api/documents/:id/bookmarks` add a bookmark
 - `POST /api/documents/:id/organize` rebuild natural reading sections from extracted chunks
-- `POST /api/documents/:id/audio-download` generate a full downloadable audio file with the selected provider
-- `GET /api/settings` read local provider/model/voice settings without returning secrets
-- `PATCH /api/settings` save local provider/model/voice settings and API keys
+- `POST /api/documents/:id/audio-download` generate a full downloadable Kokoro WAV file
+- `GET /api/settings` read Kokoro voice and optional summary settings without returning secrets
+- `PATCH /api/settings` save Kokoro voice and optional summary settings
 - `POST /api/tts/chunk` create or reuse cached audio for a chunk
+- `POST /api/tts/text` synthesize podcast text with Kokoro
 - `GET /api/audio/:file` stream or download a generated/cached audio file with range support
 - `POST /api/documents/:id/podcast` generate a conversational podcast script
 
