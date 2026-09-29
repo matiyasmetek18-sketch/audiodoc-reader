@@ -6,8 +6,10 @@ A full-stack ElevenReader-style app for uploading PDF, DOCX, and TXT files, extr
 
 - Drag-and-drop uploads for PDF, DOCX, and TXT
 - Text extraction, cleanup, and AI-assisted section organization for long documents
+- Local text-quality heuristics flag likely OCR garbage and non-narrative front/back matter without silently deleting content
 - SQLite metadata store, local file storage, and cached audio chunks
-- Modular TTS providers: no-key local macOS voices, OpenAI, ElevenLabs, or browser Web Speech fallback
+- Modular TTS providers: browser Web Speech (suggested free default), no-key local macOS voices, OpenAI, or ElevenLabs
+- Full installed voice selection for macOS `say` and browser Web Speech, with natural punctuation-preserving chunking
 - Streaming chunk playback with play/pause, skip, progress, speed, and pitch controls
 - Sentence/chunk highlighting, smooth scroll, resume position, bookmarks, and estimated reading time
 - Podcast mode that creates a two-voice conversational script and reads it chunk-by-chunk
@@ -51,7 +53,7 @@ npm run migrate --workspace apps/api
 Frontend: http://localhost:3000
 Backend: http://localhost:4000
 
-The local system-voice provider uses macOS-only `say` and `zip` executables. AudioDoc feature-detects them at startup; on other operating systems it hides the local provider and falls back to browser speech. OpenAI, ElevenLabs, and browser Web Speech are the cross-platform options. For hosted TTS, open the app Settings panel and paste your API key, or set `TTS_PROVIDER=openai` / `TTS_PROVIDER=elevenlabs` in `.env` with the matching key. Runtime settings are stored in SQLite and do not require restarting the app. With `TTS_PROVIDER=browser`, the app uses the browser Web Speech API and does not generate downloadable audio.
+The local system-voice provider uses macOS-only `say` and `zip` executables. AudioDoc feature-detects them at startup; on other operating systems it hides the local provider and falls back to browser speech. OpenAI, ElevenLabs, and browser Web Speech are the cross-platform options. Browser Web Speech is the suggested free default because Chrome and Edge often provide more natural voices than the basic macOS `say` voice. On macOS, `say -v ?` supplies the installed voice list; for better free local quality, download an Enhanced or Premium voice from System Settings → Accessibility → Spoken Content → System Voice → Manage Voices. For hosted TTS, open the app Settings panel and paste your API key, or set `TTS_PROVIDER=openai` / `TTS_PROVIDER=elevenlabs` in `.env` with the matching key. Runtime settings are stored in SQLite and do not require restarting the app. With `TTS_PROVIDER=browser`, the app uses the browser Web Speech API and does not generate downloadable audio.
 
 OpenAI voices available in the UI: `alloy`, `ash`, `ballad`, `cedar`, `coral`, `echo`, `fable`, `marin`, `nova`, `onyx`, `sage`, `shimmer`, and `verse`. OpenAI’s current docs recommend `marin` or `cedar` for best quality.
 
@@ -72,6 +74,7 @@ These are intentionally placeholders rather than generated claims about the UI; 
 - `GET /api/documents` list uploaded files and reading progress
 - `POST /api/documents` upload PDF/DOCX/TXT
 - `GET /api/documents/:id` get metadata, chunks, bookmarks
+- `GET /api/documents/:id/chunks` fetch chunk text separately from document metadata
 - `PATCH /api/documents/:id/progress` save resume position
 - `POST /api/documents/:id/bookmarks` add a bookmark
 - `POST /api/documents/:id/organize` rebuild natural reading sections from extracted chunks
@@ -84,4 +87,4 @@ These are intentionally placeholders rather than generated claims about the UI; 
 
 ## Notes
 
-The backend chunks text into manageable segments and caches audio by provider, voice, speed, pitch, and source hash. This keeps repeated playback fast and reduces API cost.
+The backend chunks text into manageable segments and caches audio by provider, voice, speed, pitch, and source hash. Each chunk also receives a local quality score based on a bundled English word list, character signals, OCR fragment patterns, ISBN/catalog markers, and edge-of-document matter. Low-confidence chunks remain visible and playable by default; use Reading → Skip flagged chunks during playback to opt into skipping them. This keeps repeated playback fast and reduces API cost without risking accidental content loss.
