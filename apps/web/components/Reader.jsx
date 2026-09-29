@@ -23,7 +23,17 @@ import { api, audioUrl } from "../lib/api";
 import { formatTime } from "../lib/format";
 
 const openAiVoices = ["alloy", "ash", "ballad", "cedar", "coral", "echo", "fable", "marin", "nova", "onyx", "sage", "shimmer", "verse"];
+const recommendedOpenAiVoices = new Set(["marin", "cedar", "shimmer"]);
+const recommendedSystemVoicePatterns = [/^Ava\b/i, /^Samantha\b/i, /^Alex\b/i, /^Daniel\b/i];
+const recommendedBrowserVoicePatterns = [
+  /Microsoft Aria.*Natural/i,
+  /Microsoft Jenny.*Natural/i,
+  /Google US English/i,
+  /^Samantha\b/i,
+  /^Alex\b/i
+];
 const fallbackBrowserVoice = { label: "Browser default", value: "", provider: "browser" };
+const kokoroVoices = ["af_heart", "af_bella", "am_michael"];
 const providerVoices = [
   ...openAiVoices.map((voice) => ({ label: `OpenAI ${voice}`, value: voice, provider: "openai" })),
   { label: "ElevenLabs deep", value: "", provider: "elevenlabs" }
@@ -37,9 +47,67 @@ function voiceForProvider(provider, value, available) {
 }
 
 function preferredBrowserVoice(voices) {
-  return voices.find((voice) => /^(Samantha|Alex|Google US English|Microsoft David|Microsoft Guy)/i.test(voice.name) && /^en(-|_)(US|GB)/i.test(voice.lang))
+  return voices.find((voice) => recommendedBrowserVoicePatterns.some((pattern) => pattern.test(voice.name)) && /^en(-|_)(US|GB)/i.test(voice.lang))
     || voices.find((voice) => /^en(-|_)US/i.test(voice.lang))
     || voices[0];
+}
+
+function isRecommendedVoice(item) {
+  if (item.provider === "system") return recommendedSystemVoicePatterns.some((pattern) => pattern.test(item.voiceName || item.value));
+  if (item.provider === "browser") return recommendedBrowserVoicePatterns.some((pattern) => pattern.test(item.voiceName || item.value));
+  if (item.provider === "openai") return recommendedOpenAiVoices.has(item.value);
+  if (item.provider === "kokoro") return kokoroVoices.includes(item.value);
+  return false;
+}
+
+function visibleVoiceOptions(options, showAll, selectedValue) {
+  if (showAll) return options;
+  const providers = [...new Set(options.map((item) => item.provider))];
+  const visible = providers.flatMap((provider) => {
+    const providerOptions = options.filter((item) => item.provider === provider);
+    const recommended = providerOptions.filter(isRecommendedVoice);
+    return recommended.length ? recommended : providerOptions;
+  });
+  const selected = options.find((item) => `${item.provider}:${item.value}` === selectedValue);
+  return selected && !visible.some((item) => `${item.provider}:${item.value}` === selectedValue) ? [selected, ...visible] : visible;
+}
+
+function hasRecommendedVoice(options, provider) {
+  return options.some((item) => item.provider === provider && isRecommendedVoice(item));
+}
+
+function tokenizeWords(text = "") {
+  return [...text.matchAll(/\S+/g)].map((match) => ({ text: match[0], start: match.index, end: match.index + match[0].length }));
+}
+
+function wordIndexAtOffset(text, offset) {
+  const words = tokenizeWords(text);
+  if (!words.length) return -1;
+  const index = words.findIndex((word) => offset >= word.start && offset < word.end);
+  if (index >= 0) return index;
+  const nextIndex = words.findIndex((word) => word.start > offset);
+  return nextIndex >= 0 ? nextIndex : words.length - 1;
+}
+
+function wordIndexAtProgress(text, elapsedSeconds, durationSeconds) {
+  const words = tokenizeWords(text);
+  if (!words.length || !durationSeconds) return -1;
+  return Math.min(words.length - 1, Math.floor((elapsedSeconds / durationSeconds) * words.length));
+}
+
+function renderWordSpans(text, active, activeWordIndex) {
+  if (!active) return text;
+  const words = tokenizeWords(text);
+  if (!words.length) return text;
+  const parts = [];
+  let cursor = 0;
+  words.forEach((word, index) => {
+    if (word.start > cursor) parts.push(text.slice(cursor, word.start));
+    parts.push(<span key={`${word.start}-${word.end}`} className={index === activeWordIndex ? "reader-word-highlight" : ""}>{word.text}</span>);
+    cursor = word.end;
+  });
+  if (cursor < text.length) parts.push(text.slice(cursor));
+  return parts;
 }
 
 export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
@@ -54,6 +122,8 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   const [skipLowConfidence, setSkipLowConfidence] = useState(false);
   const [sidebarTab, setSidebarTab] = useState("playback");
   const [voice, setVoice] = useState(fallbackBrowserVoice);
+  const [showAllVoices, setShowAllVoices] = useState(false);
+  const [activeWordIndex, setActiveWordIndex] = useState(-1);
   const [browserVoices, setBrowserVoices] = useState([]);
   const [loadingAudio, setLoadingAudio] = useState(false);
   const [elapsed, setElapsed] = useState(document.current_offset_seconds || 0);
@@ -76,8 +146,13 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   const availableVoices = useMemo(() => [
     ...(settings?.capabilities?.systemVoice ? (settings.capabilities.systemVoices || []).map((item) => ({ label: `Local Mac ${item}`, value: item, provider: "system" })) : []),
     ...(browserVoiceOptions.length ? browserVoiceOptions : [fallbackBrowserVoice]),
-    ...providerVoices
-  ], [browserVoiceOptions, settings?.capabilities?.systemVoice, settings?.capabilities?.systemVoices]);
+    ...providerVoices,
+    ...(settings?.capabilities?.kokoro ? (settings.capabilities.kokoro.voices || kokoroVoices).map((item) => ({ label: `Kokoro ${item}`, value: item, provider: "kokoro" })) : [])
+  ], [browserVoiceOptions, settings?.capabilities?.kokoro, settings?.capabilities?.systemVoice, settings?.capabilities?.systemVoices]);
+  const visibleVoices = useMemo(
+    () => visibleVoiceOptions(availableVoices, showAllVoices, `${voice.provider}:${voice.value}`),
+    [availableVoices, showAllVoices, voice]
+  );
   const audioRef = useRef(null);
   const utteranceRef = useRef(null);
   const activeRef = useRef(null);
@@ -86,6 +161,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
   const activeChunksRef = useRef(chunks);
   const podcastRef = useRef(null);
   const documentChunkRef = useRef(document.current_chunk || 0);
+  const speechTimerRef = useRef(null);
 
   const activeChunks = podcast?.chunks || chunks;
   const activeSections = podcast ? [] : localSections;
@@ -106,8 +182,36 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
       ? "OpenDyslexic, Lexie Readable, Arial, sans-serif"
       : "Inter, ui-sans-serif, system-ui, sans-serif";
 
+  function estimatedChunkDuration(text = activeChunk?.text) {
+    return Number(activeChunk?.estimated_seconds || activeChunk?.estimatedSeconds || Math.max(1, text?.split(/\s+/).filter(Boolean).length / 2.5)) / speed;
+  }
+
+  function updateEstimatedWord(seconds, duration = estimatedChunkDuration()) {
+    setActiveWordIndex(wordIndexAtProgress(activeChunk?.text || "", seconds, duration));
+  }
+
+  function clearSpeechTimer() {
+    if (speechTimerRef.current) window.clearInterval(speechTimerRef.current);
+    speechTimerRef.current = null;
+  }
+
+  function startSpeechTimer(text) {
+    clearSpeechTimer();
+    const duration = estimatedChunkDuration(text);
+    const startedAt = performance.now() - (elapsed * 1000);
+    speechTimerRef.current = window.setInterval(() => {
+      if (!isPlayingRef.current) return;
+      const seconds = Math.min(duration, (performance.now() - startedAt) / 1000);
+      setElapsed(seconds);
+      updateEstimatedWord(seconds, duration);
+    }, 80);
+  }
+
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    // Reset karaoke state when the active chunk changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveWordIndex(-1);
   }, [chunkIndex, podcast]);
 
   useEffect(() => {
@@ -143,6 +247,8 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
       nextVoice = voiceForProvider("elevenlabs", settings.elevenLabsVoiceId, availableVoices);
     } else if (settings.ttsProvider === "system" && capabilities?.systemVoice) {
       nextVoice = voiceForProvider("system", settings.systemVoice, availableVoices);
+    } else if (settings.ttsProvider === "kokoro" && capabilities?.kokoro) {
+      nextVoice = voiceForProvider("kokoro", settings.kokoroVoice, availableVoices);
     } else {
       const recommended = preferredBrowserVoice(browserVoices);
       nextVoice = voiceForProvider("browser", settings.browserVoice || recommended?.voiceURI || recommended?.name, availableVoices);
@@ -209,6 +315,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
 
   function speakInBrowser(text) {
     window.speechSynthesis.cancel();
+    setActiveWordIndex(wordIndexAtProgress(text, elapsed, estimatedChunkDuration(text)));
     const utterance = new SpeechSynthesisUtterance(text);
     const selected = browserVoices.find((candidate) => (candidate.voiceURI || candidate.name) === voice.value || candidate.name === voice.voiceName)
       || preferredBrowserVoice(browserVoices);
@@ -216,18 +323,27 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     if (selected?.lang) utterance.lang = selected.lang;
     utterance.rate = speed;
     utterance.pitch = 1 + pitch;
-    utterance.onend = nextChunk;
+    utterance.onend = () => {
+      clearSpeechTimer();
+      nextChunk();
+    };
     utterance.onboundary = (event) => {
-      if (event.name === "word") setElapsed((event.elapsedTime || 0) / 1000);
+      if (event.name === "word") {
+        const offset = Number(event.charIndex || 0);
+        setActiveWordIndex(wordIndexAtOffset(text, offset));
+        setElapsed(Math.min(estimatedChunkDuration(text), (offset / Math.max(text.length, 1)) * estimatedChunkDuration(text)));
+      }
     };
     utteranceRef.current = utterance;
     window.speechSynthesis.speak(utterance);
+    startSpeechTimer(text);
   }
 
   function pause() {
     setIsPlaying(false);
     isPlayingRef.current = false;
     audioRef.current?.pause();
+    clearSpeechTimer();
     window.speechSynthesis.pause();
     saveProgress(chunkIndex, elapsed);
   }
@@ -236,10 +352,13 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     setIsPlaying(false);
     isPlayingRef.current = false;
     audioRef.current?.pause();
+    clearSpeechTimer();
+    setActiveWordIndex(-1);
     window.speechSynthesis.cancel();
   }
 
   function nextChunk() {
+    clearSpeechTimer();
     const currentIndex = chunkIndexRef.current;
     const currentChunks = activeChunksRef.current;
     const next = skipLowConfidence ? findPlayableIndex(currentIndex, 1) : Math.min(currentChunks.length - 1, currentIndex + 1);
@@ -278,6 +397,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     if (voice.provider !== "browser" && audio?.src) {
       audio.currentTime = Math.max(0, audio.currentTime + seconds);
       setElapsed(audio.currentTime);
+      updateEstimatedWord(audio.currentTime, audio.duration || estimatedChunkDuration());
       return;
     }
     seekToTotalSeconds(currentTotalSeconds + seconds);
@@ -301,6 +421,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
     setElapsed(offset);
     if (voice.provider !== "browser" && audioRef.current?.src && nextIndex === chunkIndex) {
       audioRef.current.currentTime = offset;
+      updateEstimatedWord(offset, audioRef.current.duration || Number(activeChunks[nextIndex].estimated_seconds || activeChunks[nextIndex].estimatedSeconds || 1) / speed);
     } else if (isPlaying) {
       window.speechSynthesis.cancel();
       setTimeout(() => playChunk(nextIndex), 50);
@@ -368,6 +489,8 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
       setVoice(voiceForProvider("elevenlabs", data.settings.elevenLabsVoiceId, availableVoices));
     } else if (nextProvider === "system" && data.settings.capabilities?.systemVoice) {
       setVoice(voiceForProvider("system", data.settings.systemVoice, availableVoices));
+    } else if (nextProvider === "kokoro") {
+      setVoice(voiceForProvider("kokoro", data.settings.kokoroVoice, availableVoices));
     } else {
       const recommended = preferredBrowserVoice(browserVoices);
       setVoice(voiceForProvider("browser", data.settings.browserVoice || recommended?.voiceURI || recommended?.name, availableVoices));
@@ -483,7 +606,7 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
                     index === chunkIndex ? "text-white" : "bg-transparent text-[#cbd5df] hover:bg-[#151a21]"
                   }`}
                 >
-                  <span className={index === chunkIndex ? "reader-highlight" : ""}>{chunk.text}</span>
+                  <span className={index === chunkIndex ? "reader-highlight" : ""}>{renderWordSpans(chunk.text, index === chunkIndex, activeWordIndex)}</span>
                   {qualityFlagged && <span className="mt-3 block text-xs leading-5 text-[#d8ae6a]">Quality review: {qualityReasons(chunk).join(", ") || "possible OCR or front/back matter"}. Playback still includes this chunk unless skipping is enabled in Reading.</span>}
                 </button>
               </div>
@@ -508,8 +631,13 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
                 <label className="block text-sm text-[#cbd5df]">
                   <span className="mb-2 flex items-center gap-2"><Volume2 className="h-4 w-4" />Voice</span>
                   <select value={`${voice.provider}:${voice.value}`} onChange={(event) => setVoice(availableVoices.find((item) => `${item.provider}:${item.value}` === event.target.value) || fallbackBrowserVoice)} className="w-full rounded-md border border-[#2a3340]/70 bg-[#151a21] px-3 py-2 text-white">
-                    {availableVoices.map((item) => <option key={`${item.provider}:${item.value}`} value={`${item.provider}:${item.value}`}>{item.label}</option>)}
+                    {visibleVoices.map((item) => <option key={`${item.provider}:${item.value}`} value={`${item.provider}:${item.value}`}>{item.label}</option>)}
                   </select>
+                  <label className="mt-2 flex items-center gap-2 text-xs text-[#9aa8b7]">
+                    <input type="checkbox" checked={showAllVoices} onChange={(event) => setShowAllVoices(event.target.checked)} className="accent-[#61d6bd]" />
+                    Show all voices
+                  </label>
+                  {!showAllVoices && !hasRecommendedVoice(availableVoices, voice.provider) && <p className="mt-2 text-xs leading-5 text-[#d8ae6a]">No curated voice is installed for this provider, so all available voices are shown.</p>}
                 </label>
                 <Range label={`Speed ${speed.toFixed(2)}x`} min="0.75" max="2" step="0.05" value={speed} onChange={setSpeed} />
                 <Range label={`Pitch ${pitch.toFixed(2)}`} min="-0.2" max="0.2" step="0.01" value={pitch} onChange={setPitch} />
@@ -533,7 +661,11 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
           </div>
           <audio
             ref={audioRef}
-            onTimeUpdate={(event) => setElapsed(event.currentTarget.currentTime)}
+            onTimeUpdate={(event) => {
+              const seconds = event.currentTarget.currentTime;
+              setElapsed(seconds);
+              updateEstimatedWord(seconds, event.currentTarget.duration || estimatedChunkDuration());
+            }}
             onEnded={nextChunk}
             onPause={() => saveProgress(chunkIndex, audioRef.current?.currentTime || elapsed)}
           />
@@ -559,13 +691,18 @@ export function Reader({ documentBundle, onProgressSaved, onRefresh }) {
           onClose={() => setShowSettings(false)}
           onSave={saveSettings}
           browserVoiceOptions={browserVoiceOptions}
+          systemVoiceOptions={settings?.capabilities?.systemVoice ? (settings.capabilities.systemVoices || []).map((item) => ({ label: item, value: item, voiceName: item, provider: "system" })) : []}
+          showAllVoices={showAllVoices}
+          setShowAllVoices={setShowAllVoices}
         />
       )}
     </section>
   );
 }
 
-function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }) {
+function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions, systemVoiceOptions, showAllVoices, setShowAllVoices }) {
+  const systemOptions = visibleVoiceOptions(systemVoiceOptions, showAllVoices, `system:${settings?.systemVoice || ""}`);
+  const browserOptions = visibleVoiceOptions(browserVoiceOptions, showAllVoices, `browser:${settings?.browserVoice || ""}`);
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-black/55">
       <div className="h-full w-full max-w-md overflow-y-auto border-l border-[#2a3340] bg-[#10161e] p-5 shadow-2xl">
@@ -578,6 +715,11 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        <label className="mb-4 flex items-center gap-2 text-xs text-[#9aa8b7]">
+          <input type="checkbox" checked={showAllVoices} onChange={(event) => setShowAllVoices(event.target.checked)} className="accent-[#61d6bd]" />
+          Show all detected voices
+        </label>
 
         <form
           className="space-y-4"
@@ -594,6 +736,7 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }
             <select name="ttsProvider" defaultValue={settings?.ttsProvider || "browser"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
               {settings?.capabilities?.systemVoice && <option value="system">Local Mac voice</option>}
               <option value="browser">Browser Web Speech</option>
+              {settings?.capabilities?.kokoro && <option value="kokoro">Kokoro {settings.capabilities.kokoro.available ? "(ready)" : "(download on first use)"}</option>}
               <option value="openai">OpenAI</option>
               <option value="elevenlabs">ElevenLabs</option>
             </select>
@@ -605,8 +748,9 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }
               <label className="block text-sm text-[#cbd5df]">
                 <span className="mb-2 block">macOS system voice</span>
                 <select name="systemVoice" defaultValue={settings?.systemVoice || "Reed (English (US))"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                  {(settings.capabilities.systemVoices || []).map((voice) => <option key={voice} value={voice}>{voice}</option>)}
+                  {systemOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
+                {!showAllVoices && !hasRecommendedVoice(systemVoiceOptions, "system") && <span className="mt-2 block text-xs leading-5 text-[#d8ae6a]">No curated voice is installed, so all available local voices are shown.</span>}
                 <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">For a more natural free voice, install an Enhanced or Premium voice in System Settings &gt; Accessibility &gt; Spoken Content &gt; System Voice &gt; Manage Voices.</span>
               </label>
             </div>
@@ -617,9 +761,21 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }
             <label className="block text-sm text-[#cbd5df]">
               <span className="mb-2 block">Browser voice</span>
               <select name="browserVoice" defaultValue={settings?.browserVoice || browserVoiceOptions[0]?.value || ""} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                {browserVoiceOptions.length ? browserVoiceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">Browser default</option>}
+                {browserOptions.length ? browserOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">Browser default</option>}
               </select>
+              {!showAllVoices && browserVoiceOptions.length > 0 && !hasRecommendedVoice(browserVoiceOptions, "browser") && <span className="mt-2 block text-xs leading-5 text-[#d8ae6a]">No curated voice is installed, so all available browser voices are shown.</span>}
               <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">Voice quality comes from your browser and operating system. Browser Web Speech is the suggested free default.</span>
+            </label>
+          </div>
+
+          <div className="rounded-lg border border-[#2a3340] p-4">
+            <p className="mb-3 text-sm font-semibold text-white">Kokoro local neural voice</p>
+            <label className="block text-sm text-[#cbd5df]">
+              <span className="mb-2 block">Voice</span>
+              <select name="kokoroVoice" defaultValue={settings?.kokoroVoice || "af_heart"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
+                {kokoroVoices.map((voice) => <option key={voice} value={voice}>{voice}</option>)}
+              </select>
+              <span className="mt-2 block text-xs leading-5 text-[#9aa8b7]">{settings?.capabilities?.kokoro?.available ? "Model ready. Audio is generated locally on the server." : "Model is not downloaded yet. The first Kokoro playback downloads about 86 MB into storage/models/kokoro/."}</span>
             </label>
           </div>
 
@@ -636,7 +792,7 @@ function SettingsPanel({ settings, saved, onClose, onSave, browserVoiceOptions }
             <label className="block text-sm text-[#cbd5df]">
               <span className="mb-2 block">Default voice</span>
               <select name="openaiTtsVoice" defaultValue={settings?.openaiTtsVoice || "onyx"} className="w-full rounded-md border border-[#2a3340] bg-[#151a21] px-3 py-2 text-white">
-                {openAiVoices.map((voice) => <option key={voice} value={voice}>{voice}</option>)}
+                {visibleVoiceOptions(providerVoices.filter((item) => item.provider === "openai"), showAllVoices, `openai:${settings?.openaiTtsVoice || ""}`).map((item) => <option key={item.value} value={item.value}>{item.value}</option>)}
               </select>
               <span className="mt-2 block text-xs text-[#9aa8b7]">OpenAI currently recommends `marin` or `cedar` for best quality.</span>
             </label>
