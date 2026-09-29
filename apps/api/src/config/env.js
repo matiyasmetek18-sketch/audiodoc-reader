@@ -15,6 +15,7 @@ export const env = {
   uploadDir: path.resolve(projectRoot, process.env.UPLOAD_DIR ?? "./storage/uploads"),
   audioDir: path.resolve(projectRoot, process.env.AUDIO_DIR ?? "./storage/audio"),
   cacheDir: path.resolve(projectRoot, process.env.CACHE_DIR ?? "./storage/cache"),
+  kokoroModelDir: path.resolve(projectRoot, process.env.KOKORO_MODEL_DIR ?? "./storage/models/kokoro"),
   maxUploadMb: Number(process.env.MAX_UPLOAD_MB ?? 100),
   ttsProvider: process.env.TTS_PROVIDER ?? "browser",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",

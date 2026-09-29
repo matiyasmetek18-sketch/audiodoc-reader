@@ -9,6 +9,7 @@ import { createElevenLabsProvider } from "./elevenLabsProvider.js";
 import { createSystemProvider } from "./systemProvider.js";
 import { detectSystemCapabilities } from "./systemCapabilities.js";
 import { createTestProvider } from "./testProvider.js";
+import { createKokoroProvider, getKokoroCapabilities } from "./kokoroProvider.js";
 
 const systemCapabilities = detectSystemCapabilities();
 const providers = {
@@ -16,7 +17,8 @@ const providers = {
   browser: createBrowserProvider(),
   openai: createOpenAiProvider(env),
   elevenlabs: createElevenLabsProvider(env),
-  test: createTestProvider()
+  test: createTestProvider(),
+  kokoro: createKokoroProvider()
 };
 const inFlightSynthesis = new Map();
 
@@ -32,11 +34,13 @@ export function getTtsCapabilities() {
     systemVoice: systemCapabilities.systemVoice,
     systemExport: systemCapabilities.systemExport,
     systemVoices: systemCapabilities.systemVoices,
+    kokoro: getKokoroCapabilities(),
     providers: {
       browser: true,
       openai: true,
       elevenlabs: true,
-      system: systemCapabilities.systemVoice
+      system: systemCapabilities.systemVoice,
+      kokoro: true
     }
   };
 }
@@ -111,5 +115,6 @@ function defaultVoice(provider, settings) {
   if (provider === "openai") return settings.openaiTtsVoice || env.openaiTtsVoice;
   if (provider === "elevenlabs") return settings.elevenLabsVoiceId || env.elevenLabsVoiceId || "deep-calm";
   if (provider === "system") return settings.systemVoice || "Reed (English (US))";
+  if (provider === "kokoro") return settings.kokoroVoice || "af_heart";
   return "browser-deep";
 }

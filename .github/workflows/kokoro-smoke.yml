@@ -1,0 +1,39 @@
+name: Kokoro Smoke Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  kokoro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Restore Kokoro model cache
+        uses: actions/cache@v4
+        with:
+          path: storage/models/kokoro
+          key: kokoro-q8f16-v1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Synthesize Kokoro samples
+        env:
+          KOKORO_MODEL_DIR: ${{ github.workspace }}/storage/models/kokoro
+        run: npm run benchmark:kokoro --workspace apps/api
+
+      - name: Assert non-empty WAV output
+        run: |
+          test -s /tmp/audiodoc-kokoro-samples/kokoro-10s.wav
+          test -s /tmp/audiodoc-kokoro-samples/kokoro-30s.wav
+          test -s /tmp/audiodoc-kokoro-samples/kokoro-120s.wav

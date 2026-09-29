@@ -8,6 +8,7 @@ coverage
 storage/uploads/*
 storage/audio/*
 storage/cache/*
+storage/models/*
 storage/app.json
 !storage/uploads/.gitkeep
 !storage/audio/.gitkeep

@@ -17,6 +17,7 @@ settingsRouter.patch("/", (req, res) => {
     "openaiTtsVoice",
     "openaiSummaryModel",
     "browserVoice",
+    "kokoroVoice",
     "elevenLabsVoiceId",
     "elevenLabsModelId"
   ]) {

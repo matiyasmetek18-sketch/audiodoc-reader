@@ -202,6 +202,7 @@ export function getAppSettings() {
     openaiSummaryModel: stored.openaiSummaryModel || env.openaiSummaryModel,
     openaiApiKey: stored.openaiApiKey || env.openaiApiKey,
     browserVoice: stored.browserVoice || "",
+    kokoroVoice: stored.kokoroVoice || "af_heart",
     elevenLabsVoiceId: stored.elevenLabsVoiceId || env.elevenLabsVoiceId,
     elevenLabsModelId: stored.elevenLabsModelId || env.elevenLabsModelId,
     elevenLabsApiKey: stored.elevenLabsApiKey || env.elevenLabsApiKey
@@ -229,6 +230,7 @@ function getPublicSettingsFromStore(settings) {
     openaiTtsVoice: settings.openaiTtsVoice || env.openaiTtsVoice,
     openaiSummaryModel: settings.openaiSummaryModel || env.openaiSummaryModel,
     browserVoice: settings.browserVoice || "",
+    kokoroVoice: settings.kokoroVoice || "af_heart",
     hasOpenaiApiKey: Boolean(settings.openaiApiKey || env.openaiApiKey),
     elevenLabsVoiceId: settings.elevenLabsVoiceId || env.elevenLabsVoiceId,
     elevenLabsModelId: settings.elevenLabsModelId || env.elevenLabsModelId,
