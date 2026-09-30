@@ -1,8 +1,14 @@
 # AudioDoc Reader
 
+https://github.com/user-attachments/assets/e5aeb9eb-f5cd-48d4-87b5-a8a4e9518a0f
+
+<img width="1470" height="956" alt="Screenshot 2026-09-30 at 2 23 44 PM" src="https://github.com/user-attachments/assets/06e72b43-b9ef-47a2-af03-4258485c552c" />
+
 [![CI](https://github.com/matiyasmetek18-sketch/audiodoc-reader/actions/workflows/ci.yml/badge.svg)](https://github.com/matiyasmetek18-sketch/audiodoc-reader/actions/workflows/ci.yml)
 
 A full-stack ElevenReader-style app for uploading PDF, DOCX, and TXT files, extracting clean text, and reading documents aloud with chunked, cached text-to-speech.
+
+
 
 ## Why I Built This
 
